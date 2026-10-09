@@ -1,11 +1,18 @@
 #import "ABBackupEngine.h"
 #import "ABAppLibrary.h"
 #import "ABTarArchive.h"
+#import <dirent.h>
 #import <dlfcn.h>
 #import <errno.h>
+#import <grp.h>
 #import <objc/message.h>
+#import <pwd.h>
+#import <signal.h>
 #import <sys/stat.h>
+#import <sys/sysctl.h>
 #import <unistd.h>
+
+extern int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
 
 static const uint64_t ABSpaceMargin = 64ull * 1024ull * 1024ull;
 
@@ -254,6 +261,136 @@ static void ABTerminateApplication(NSString *bundleID) {
     function(service, selector, bundleID, 1, NO, @"AppBackup");
 }
 
+static BOOL ABPathMatchesBundle(NSString *processPath, NSString *bundlePath) {
+    if (processPath.length == 0 || bundlePath.length == 0 || ![bundlePath containsString:@".app"]) {
+        return NO;
+    }
+    NSString *alternate = nil;
+    if ([bundlePath hasPrefix:@"/private/"]) {
+        alternate = [bundlePath substringFromIndex:8];
+    } else {
+        alternate = [@"/private" stringByAppendingString:bundlePath];
+    }
+    return [processPath hasPrefix:bundlePath] || [processPath hasPrefix:alternate];
+}
+
+static void ABKillProcessesForBundle(NSURL *bundleURL) {
+    NSString *bundlePath = bundleURL.path;
+    if (!ABPathMatchesBundle(bundlePath, bundlePath)) {
+        return;
+    }
+    int name[3] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL};
+    size_t size = 0;
+    if (sysctl(name, 3, NULL, &size, NULL, 0) != 0 || size == 0) {
+        return;
+    }
+    struct kinfo_proc *processes = malloc(size);
+    if (!processes) {
+        return;
+    }
+    if (sysctl(name, 3, processes, &size, NULL, 0) != 0) {
+        free(processes);
+        return;
+    }
+    int count = (int)(size / sizeof(struct kinfo_proc));
+    pid_t selfPid = getpid();
+    NSMutableArray<NSNumber *> *pids = [NSMutableArray array];
+    for (int index = 0; index < count; index++) {
+        pid_t pid = processes[index].kp_proc.p_pid;
+        if (pid <= 1 || pid == selfPid) {
+            continue;
+        }
+        char path[4096];
+        if (proc_pidpath(pid, path, sizeof(path)) <= 0) {
+            continue;
+        }
+        NSString *processPath = [NSString stringWithUTF8String:path];
+        if (ABPathMatchesBundle(processPath, bundlePath)) {
+            [pids addObject:@(pid)];
+        }
+    }
+    free(processes);
+    for (NSNumber *pid in pids) {
+        kill(pid.intValue, SIGTERM);
+    }
+    if (pids.count > 0) {
+        [NSThread sleepForTimeInterval:0.4];
+    }
+    for (NSNumber *pid in pids) {
+        kill(pid.intValue, SIGKILL);
+    }
+}
+
+static void ABStopApplication(NSString *bundleID, NSURL *bundleURL) {
+    ABTerminateApplication(bundleID);
+    ABKillProcessesForBundle(bundleURL);
+    [NSThread sleepForTimeInterval:0.4];
+}
+
+static void ABRepairOwnership(NSString *root) {
+    if (root.length == 0) {
+        return;
+    }
+    uid_t uid = 501;
+    gid_t gid = 501;
+    struct passwd *user = getpwnam("mobile");
+    struct group *group = getgrnam("mobile");
+    if (user) {
+        uid = user->pw_uid;
+    }
+    if (group) {
+        gid = group->gr_gid;
+    }
+    NSMutableArray<NSString *> *pending = [NSMutableArray arrayWithObject:root];
+    while (pending.count > 0) {
+        NSString *path = pending.lastObject;
+        [pending removeLastObject];
+        const char *filePath = path.fileSystemRepresentation;
+        struct stat info;
+        if (lstat(filePath, &info) != 0) {
+            continue;
+        }
+        lchown(filePath, uid, gid);
+        if (S_ISLNK(info.st_mode)) {
+            continue;
+        }
+        if (S_ISDIR(info.st_mode)) {
+            if ((info.st_mode & 0700) != 0700) {
+                chmod(filePath, 0755);
+            }
+            DIR *directory = opendir(filePath);
+            if (!directory) {
+                continue;
+            }
+            struct dirent *entry = NULL;
+            while ((entry = readdir(directory)) != NULL) {
+                if (entry->d_name[0] == '.' && (entry->d_name[1] == '\0' || (entry->d_name[1] == '.' && entry->d_name[2] == '\0'))) {
+                    continue;
+                }
+                NSString *name = [NSString stringWithUTF8String:entry->d_name];
+                if (name.length == 0) {
+                    continue;
+                }
+                [pending addObject:[path stringByAppendingPathComponent:name]];
+            }
+            closedir(directory);
+        } else if (S_ISREG(info.st_mode) && (info.st_mode & 0600) != 0600) {
+            chmod(filePath, 0644);
+        }
+    }
+}
+
+static void ABRepairDataContainer(NSString *root) {
+    if (root.length == 0) {
+        return;
+    }
+    NSFileManager *manager = [NSFileManager defaultManager];
+    for (NSString *relative in @[@"Documents", @"Library", @"Library/Caches", @"Library/Preferences", @"tmp"]) {
+        [manager createDirectoryAtPath:[root stringByAppendingPathComponent:relative] withIntermediateDirectories:YES attributes:nil error:nil];
+    }
+    ABRepairOwnership(root);
+}
+
 static uint64_t ABFreeBytes(NSString *path) {
     NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfFileSystemForPath:path error:nil];
     return [attributes[NSFileSystemFreeSize] unsignedLongLongValue];
@@ -419,6 +556,8 @@ static uint64_t ABFreeBytes(NSString *path) {
         }
         return nil;
     }
+    [self report:progress message:@"正在退出应用" done:0 total:0 force:YES];
+    ABStopApplication(app.bundleIdentifier, location.bundleURL ?: app.bundleURL);
     NSMutableArray<ABFileItem *> *items = [NSMutableArray array];
     NSMutableArray<NSString *> *groupIDs = [NSMutableArray array];
     uint64_t total = 0;
@@ -640,37 +779,41 @@ static uint64_t ABFreeBytes(NSString *path) {
         return NO;
     }
     [self report:progress message:@"正在退出应用" done:uncompressed total:MAX(uncompressed, 1) force:YES];
-    ABTerminateApplication(bundleIdentifier);
-    [NSThread sleepForTimeInterval:0.6];
+    ABStopApplication(bundleIdentifier, location.bundleURL);
     NSFileManager *manager = [NSFileManager defaultManager];
     NSURL *extractedContainer = [temp URLByAppendingPathComponent:@"container" isDirectory:YES];
     BOOL isDirectory = NO;
+    BOOL restoredContainer = NO;
     if ([manager fileExistsAtPath:extractedContainer.path isDirectory:&isDirectory] && isDirectory) {
         [self report:progress message:@"正在写回数据" done:uncompressed total:MAX(uncompressed, 1) force:YES];
         if (![self replaceChildrenOfDirectory:location.dataContainerURL withDirectory:extractedContainer error:error]) {
             [manager removeItemAtURL:temp error:nil];
             return NO;
         }
+        restoredContainer = YES;
     }
     NSURL *groupsRoot = [temp URLByAppendingPathComponent:@"groups" isDirectory:YES];
     if ([manager fileExistsAtPath:groupsRoot.path isDirectory:&isDirectory] && isDirectory) {
-        NSArray<NSURL *> *groupDirs = [manager contentsOfDirectoryAtURL:groupsRoot includingPropertiesForKeys:nil options:0 error:error];
-        if (!groupDirs) {
-            [manager removeItemAtURL:temp error:nil];
-            return NO;
-        }
+        NSArray<NSURL *> *groupDirs = [manager contentsOfDirectoryAtURL:groupsRoot includingPropertiesForKeys:nil options:0 error:nil];
         for (NSURL *groupDir in groupDirs) {
             NSString *groupID = groupDir.lastPathComponent;
             NSURL *liveGroup = location.groupContainers[groupID];
             if (!liveGroup) {
-                [warnings addObject:[NSString stringWithFormat:@"找不到 App Group：%@", groupID]];
+                [warnings addObject:[NSString stringWithFormat:@"找不到 App Group：%@。主数据仍会恢复。", groupID]];
                 continue;
             }
-            if (![self replaceChildrenOfDirectory:liveGroup withDirectory:groupDir error:error]) {
-                [manager removeItemAtURL:temp error:nil];
-                return NO;
+            NSError *groupError = nil;
+            if (![self replaceChildrenOfDirectory:liveGroup withDirectory:groupDir error:&groupError]) {
+                [warnings addObject:[NSString stringWithFormat:@"App Group %@ 没有完整写回：%@", groupID, groupError.localizedDescription ?: @"未知原因"]];
+                continue;
             }
+            [self report:progress message:@"正在修正权限" done:uncompressed total:MAX(uncompressed, 1) force:YES];
+            ABRepairOwnership(liveGroup.path);
         }
+    }
+    if (restoredContainer) {
+        [self report:progress message:@"正在修正权限" done:uncompressed total:MAX(uncompressed, 1) force:YES];
+        ABRepairDataContainer(location.dataContainerURL.path);
     }
     [manager removeItemAtURL:temp error:nil];
     [self report:progress message:@"恢复完成" done:uncompressed total:MAX(uncompressed, 1) force:YES];
