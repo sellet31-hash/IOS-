@@ -14,7 +14,7 @@
 @property (nonatomic, strong) UILabel *versionLabel;
 @property (nonatomic, strong) UILabel *bundleLabel;
 @property (nonatomic, strong) UILabel *pathLabel;
-@property (nonatomic, strong) UIButton *copyButton;
+@property (nonatomic, strong) UIButton *pathButton;
 @end
 
 @implementation ABAppDetailViewController
@@ -82,13 +82,13 @@
     [header addSubview:path];
     self.pathLabel = path;
 
-    UIButton *copy = [UIButton buttonWithType:UIButtonTypeSystem];
-    copy.translatesAutoresizingMaskIntoConstraints = NO;
-    [copy setTitle:@"复制数据路径" forState:UIControlStateNormal];
-    copy.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
-    [copy addTarget:self action:@selector(copyPath) forControlEvents:UIControlEventTouchUpInside];
-    [header addSubview:copy];
-    self.copyButton = copy;
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+    button.translatesAutoresizingMaskIntoConstraints = NO;
+    [button setTitle:@"复制数据路径" forState:UIControlStateNormal];
+    button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+    [button addTarget:self action:@selector(pasteContainerPath) forControlEvents:UIControlEventTouchUpInside];
+    [header addSubview:button];
+    self.pathButton = button;
 
     [NSLayoutConstraint activateConstraints:@[
         [icon.topAnchor constraintEqualToAnchor:header.topAnchor constant:8],
@@ -108,9 +108,9 @@
         [path.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-20],
         [path.topAnchor constraintGreaterThanOrEqualToAnchor:icon.bottomAnchor constant:16],
         [path.topAnchor constraintGreaterThanOrEqualToAnchor:bundle.bottomAnchor constant:16],
-        [copy.leadingAnchor constraintEqualToAnchor:path.leadingAnchor],
-        [copy.topAnchor constraintEqualToAnchor:path.bottomAnchor constant:4],
-        [copy.bottomAnchor constraintEqualToAnchor:header.bottomAnchor constant:-8]
+        [button.leadingAnchor constraintEqualToAnchor:path.leadingAnchor],
+        [button.topAnchor constraintEqualToAnchor:path.bottomAnchor constant:4],
+        [button.bottomAnchor constraintEqualToAnchor:header.bottomAnchor constant:-8]
     ]];
     self.tableView.tableHeaderView = header;
     [self fillHeader];
@@ -122,7 +122,7 @@
     self.versionLabel.text = self.app.bundleVersion.length ? [NSString stringWithFormat:@"版本 %@ (%@)", version, self.app.bundleVersion] : [NSString stringWithFormat:@"版本 %@", version];
     self.bundleLabel.text = self.app.bundleIdentifier;
     self.pathLabel.text = self.app.dataContainerURL.path.length ? self.app.dataContainerURL.path : @"还没有数据目录";
-    self.copyButton.hidden = self.app.dataContainerURL.path.length == 0;
+    self.pathButton.hidden = self.app.dataContainerURL.path.length == 0;
     UIImage *icon = ABAppIcon(self.app.bundleIdentifier);
     self.iconView.image = icon ?: [UIImage systemImageNamed:@"app.fill"];
     self.iconView.tintColor = icon ? nil : UIColor.secondaryLabelColor;
@@ -142,7 +142,7 @@
     }
 }
 
-- (void)copyPath {
+- (void)pasteContainerPath {
     if (self.app.dataContainerURL.path.length == 0) {
         return;
     }
