@@ -63,7 +63,7 @@
     NSString *query = self.searchText.lowercaseString;
     NSMutableArray<ABBackupInfo *> *matches = [NSMutableArray array];
     for (ABBackupInfo *backup in self.backups) {
-        if ([backup.displayName.lowercaseString containsString:query] || [backup.bundleIdentifier.lowercaseString containsString:query]) {
+        if ([backup.preferredTitle.lowercaseString containsString:query] || [backup.displayName.lowercaseString containsString:query] || [backup.bundleIdentifier.lowercaseString containsString:query]) {
             [matches addObject:backup];
         }
     }
@@ -110,17 +110,9 @@
         return cell;
     }
     ABBackupInfo *backup = [self visibleBackups][indexPath.row];
-    cell.textLabel.text = backup.displayName;
-    NSMutableArray<NSString *> *parts = [NSMutableArray array];
-    NSString *date = ABFormatDate(backup.createdAt);
-    if (date.length > 0) {
-        [parts addObject:date];
-    }
-    if (backup.shortVersion.length > 0) {
-        [parts addObject:backup.shortVersion];
-    }
-    [parts addObject:ABFormatBytes(backup.fileSize)];
-    cell.detailTextLabel.text = [parts componentsJoinedByString:@" · "];
+    cell.textLabel.text = backup.preferredTitle;
+    cell.detailTextLabel.numberOfLines = 2;
+    cell.detailTextLabel.text = backup.summaryText;
     cell.detailTextLabel.textColor = UIColor.secondaryLabelColor;
     UIImage *icon = ABAppIcon(backup.bundleIdentifier);
     cell.imageView.image = icon ?: [UIImage systemImageNamed:@"archivebox"];
@@ -138,13 +130,18 @@
     if (self.unreadableCount > 0) {
         return [NSString stringWithFormat:@"有 %lu 个文件无法读取。可用的备份在「文件」App 的「应用备份 / Backups」。", (unsigned long)self.unreadableCount];
     }
-    return @"备份文件在「文件」App 的「应用备份 / Backups」，可以拷到电脑上保存。";
+    return @"点一份备份可以修改名称，用来标记用途。恢复成功后会自动记下上次使用时间。";
 }
 
 - (void)presentActionsForBackup:(ABBackupInfo *)backup sourceView:(UIView *)sourceView {
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:backup.displayName message:ABFormatDate(backup.createdAt) preferredStyle:UIAlertControllerStyleActionSheet];
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:backup.preferredTitle message:backup.summaryText preferredStyle:UIAlertControllerStyleActionSheet];
     [sheet addAction:[UIAlertAction actionWithTitle:@"恢复" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
         [ABBackupActions confirmRestore:backup fromViewController:self sourceView:sourceView completion:^{
+            [self reloadBackups];
+        }];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"修改名称" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+        [ABBackupActions renameBackup:backup fromViewController:self completion:^{
             [self reloadBackups];
         }];
     }]];

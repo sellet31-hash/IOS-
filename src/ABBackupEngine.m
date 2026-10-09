@@ -115,6 +115,90 @@ static const uint64_t ABSpaceMargin = 64ull * 1024ull * 1024ull;
     return directory;
 }
 
++ (NSURL *)metadataURLForArchive:(NSURL *)archive {
+    return [NSURL fileURLWithPath:[archive.path stringByAppendingString:@".meta"]];
+}
+
++ (NSDictionary *)metadataForArchive:(NSURL *)archive {
+    NSDictionary *metadata = [NSDictionary dictionaryWithContentsOfURL:[self metadataURLForArchive:archive]];
+    return [metadata isKindOfClass:[NSDictionary class]] ? metadata : @{};
+}
+
++ (NSDate *)dateFromMetadata:(id)value {
+    if (![value isKindOfClass:[NSString class]] || [value length] == 0) {
+        return nil;
+    }
+    NSISO8601DateFormatter *formatter = [NSISO8601DateFormatter new];
+    formatter.formatOptions = NSISO8601DateFormatWithInternetDateTime;
+    return [formatter dateFromString:value];
+}
+
++ (BOOL)writeMetadataForArchive:(NSURL *)archive customName:(NSString *)customName lastUsedAt:(NSDate *)lastUsedAt error:(NSError **)error {
+    NSMutableDictionary *metadata = [NSMutableDictionary dictionary];
+    if (customName.length > 0) {
+        metadata[@"customName"] = customName;
+    }
+    if (lastUsedAt) {
+        NSISO8601DateFormatter *formatter = [NSISO8601DateFormatter new];
+        formatter.formatOptions = NSISO8601DateFormatWithInternetDateTime;
+        NSString *stamp = [formatter stringFromDate:lastUsedAt];
+        if (stamp.length > 0) {
+            metadata[@"lastUsedAt"] = stamp;
+        }
+    }
+    NSURL *metadataURL = [self metadataURLForArchive:archive];
+    if (metadata.count == 0) {
+        [[NSFileManager defaultManager] removeItemAtURL:metadataURL error:nil];
+        return YES;
+    }
+    if (![metadata writeToURL:metadataURL error:error]) {
+        return NO;
+    }
+    return YES;
+}
+
++ (BOOL)renameBackupAtURL:(NSURL *)fileURL name:(NSString *)name error:(NSError **)error {
+    if (!fileURL) {
+        if (error) {
+            *error = ABMakeError(ABErrorFailed, @"找不到这份备份");
+        }
+        return NO;
+    }
+    NSString *trimmed = [name stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] ?: @"";
+    if (trimmed.length > 60) {
+        if (error) {
+            *error = ABMakeError(ABErrorFailed, @"名称最多 60 个字");
+        }
+        return NO;
+    }
+    if ([trimmed rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"/\\:"]].location != NSNotFound) {
+        if (error) {
+            *error = ABMakeError(ABErrorFailed, @"名称里不能包含 / \\ :");
+        }
+        return NO;
+    }
+    NSDictionary *metadata = [self metadataForArchive:fileURL];
+    return [self writeMetadataForArchive:fileURL customName:trimmed lastUsedAt:[self dateFromMetadata:metadata[@"lastUsedAt"]] error:error];
+}
+
++ (void)markBackupUsedAtURL:(NSURL *)fileURL {
+    if (!fileURL) {
+        return;
+    }
+    NSDictionary *metadata = [self metadataForArchive:fileURL];
+    NSString *customName = [metadata[@"customName"] isKindOfClass:[NSString class]] ? metadata[@"customName"] : @"";
+    [self writeMetadataForArchive:fileURL customName:customName lastUsedAt:[NSDate date] error:nil];
+}
+
++ (void)deleteBackupAtURL:(NSURL *)fileURL {
+    if (!fileURL) {
+        return;
+    }
+    NSFileManager *manager = [NSFileManager defaultManager];
+    [manager removeItemAtURL:fileURL error:nil];
+    [manager removeItemAtURL:[self metadataURLForArchive:fileURL] error:nil];
+}
+
 + (NSArray<ABBackupInfo *> *)allBackupsWithUnreadableCount:(NSUInteger *)unreadable error:(NSError **)error {
     NSURL *directory = [self backupDirectoryURL:error];
     if (!directory) {
@@ -148,6 +232,9 @@ static const uint64_t ABSpaceMargin = 64ull * 1024ull * 1024ull;
         info.bundleIdentifier = bundleID;
         info.displayName = [manifest[@"displayName"] isKindOfClass:[NSString class]] && [manifest[@"displayName"] length] > 0 ? manifest[@"displayName"] : bundleID;
         info.shortVersion = [manifest[@"shortVersion"] isKindOfClass:[NSString class]] ? manifest[@"shortVersion"] : @"";
+        NSDictionary *metadata = [self metadataForArchive:file];
+        info.customName = [metadata[@"customName"] isKindOfClass:[NSString class]] ? metadata[@"customName"] : @"";
+        info.lastUsedAt = [self dateFromMetadata:metadata[@"lastUsedAt"]];
         NSString *created = [manifest[@"createdAt"] isKindOfClass:[NSString class]] ? manifest[@"createdAt"] : nil;
         info.createdAt = created ? [iso dateFromString:created] : nil;
         NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:file.path error:nil];

@@ -14,6 +14,9 @@ typedef void (^ABRestoreCompletion)(NSArray<NSString *> *_Nullable warnings, NSE
 + (nullable NSURL *)backupDirectoryURL:(NSError *_Nullable *_Nullable)error;
 + (NSArray<ABBackupInfo *> *)allBackupsWithUnreadableCount:(NSUInteger *_Nullable)unreadable
                                                      error:(NSError *_Nullable *_Nullable)error;
++ (BOOL)renameBackupAtURL:(NSURL *)fileURL name:(NSString *)name error:(NSError *_Nullable *_Nullable)error;
++ (void)markBackupUsedAtURL:(NSURL *)fileURL;
++ (void)deleteBackupAtURL:(NSURL *)fileURL;
 - (BOOL)calculateSizeForApp:(ABAppInfo *)app
                     options:(ABBackupOptions *)options
                       bytes:(uint64_t *)bytes

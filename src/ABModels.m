@@ -51,6 +51,38 @@ NSString *ABFormatDate(NSDate *date) {
 @end
 
 @implementation ABBackupInfo
+
+- (NSString *)preferredTitle {
+    if (self.customName.length > 0) {
+        return self.customName;
+    }
+    if (self.displayName.length > 0) {
+        return self.displayName;
+    }
+    return self.bundleIdentifier.length > 0 ? self.bundleIdentifier : @"备份";
+}
+
+- (NSString *)summaryText {
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    NSString *created = ABFormatDate(self.createdAt);
+    if (created.length > 0) {
+        [parts addObject:[NSString stringWithFormat:@"备份于 %@", created]];
+    }
+    NSString *used = ABFormatDate(self.lastUsedAt);
+    if (used.length > 0) {
+        [parts addObject:[NSString stringWithFormat:@"上次使用 %@", used]];
+    } else {
+        [parts addObject:@"尚未使用"];
+    }
+    if (self.shortVersion.length > 0) {
+        [parts addObject:self.shortVersion];
+    }
+    if (self.fileSize > 0) {
+        [parts addObject:ABFormatBytes(self.fileSize)];
+    }
+    return [parts componentsJoinedByString:@" · "];
+}
+
 @end
 
 @implementation ABFileItem

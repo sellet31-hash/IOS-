@@ -275,9 +275,9 @@
     }
     ABBackupInfo *backup = self.backups[indexPath.row];
     cell.textLabel.textColor = UIColor.labelColor;
-    cell.textLabel.text = ABFormatDate(backup.createdAt);
-    NSString *version = backup.shortVersion.length ? backup.shortVersion : @"";
-    cell.detailTextLabel.text = version.length ? [NSString stringWithFormat:@"%@ · %@", version, ABFormatBytes(backup.fileSize)] : ABFormatBytes(backup.fileSize);
+    cell.textLabel.text = backup.preferredTitle;
+    cell.detailTextLabel.text = backup.summaryText;
+    cell.detailTextLabel.numberOfLines = 2;
     cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     return cell;
@@ -311,9 +311,14 @@
     }
     ABBackupInfo *backup = self.backups[indexPath.row];
     UITableViewCell *cell = [tableView cellForRowAtIndexPath:indexPath];
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:ABFormatDate(backup.createdAt) message:ABFormatBytes(backup.fileSize) preferredStyle:UIAlertControllerStyleActionSheet];
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:backup.preferredTitle message:backup.summaryText preferredStyle:UIAlertControllerStyleActionSheet];
     [sheet addAction:[UIAlertAction actionWithTitle:@"恢复" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
         [ABBackupActions confirmRestore:backup fromViewController:self sourceView:cell completion:^{
+            [self refreshLocationAndBackups];
+        }];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"修改名称" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+        [ABBackupActions renameBackup:backup fromViewController:self completion:^{
             [self refreshLocationAndBackups];
         }];
     }]];

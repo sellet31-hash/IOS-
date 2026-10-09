@@ -45,9 +45,13 @@ NSString *ABFormatDate(NSDate *date);
 @property (nonatomic, copy) NSURL *fileURL;
 @property (nonatomic, copy) NSString *bundleIdentifier;
 @property (nonatomic, copy) NSString *displayName;
+@property (nonatomic, copy) NSString *customName;
 @property (nonatomic, copy) NSString *shortVersion;
 @property (nonatomic, strong) NSDate *createdAt;
+@property (nonatomic, strong) NSDate *lastUsedAt;
 @property (nonatomic) uint64_t fileSize;
+- (NSString *)preferredTitle;
+- (NSString *)summaryText;
 @end
 
 @interface ABFileItem : NSObject

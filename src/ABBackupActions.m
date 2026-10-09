@@ -56,7 +56,10 @@
 
 + (void)confirmRestore:(ABBackupInfo *)backup fromViewController:(UIViewController *)controller sourceView:(UIView *)sourceView completion:(dispatch_block_t)completion {
     NSString *when = ABFormatDate(backup.createdAt);
-    NSString *message = [NSString stringWithFormat:@"会先退出「%@」，再用 %@ 的备份覆盖它现在的数据。缓存会被清掉。此操作不能撤销。", backup.displayName, when.length ? when : @"这份"];
+    NSString *message = [NSString stringWithFormat:@"会先退出「%@」，再用「%@」覆盖它现在的数据。缓存会被清掉。此操作不能撤销。", backup.displayName, backup.preferredTitle];
+    if (when.length > 0) {
+        message = [message stringByAppendingFormat:@"\n这份备份创建于 %@。", when];
+    }
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"恢复应用数据" message:message preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"恢复" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
         [self restoreBackup:backup fromViewController:controller completion:completion];
@@ -74,6 +77,9 @@
         [overlay updateMessage:message fraction:fraction bytesDone:bytesDone bytesTotal:bytesTotal];
     } completion:^(NSArray<NSString *> *warnings, NSError *error) {
         [overlay dismiss];
+        if (!error) {
+            [ABBackupEngine markBackupUsedAtURL:backup.fileURL];
+        }
         if (completion) {
             completion();
         }
@@ -97,6 +103,30 @@
     }];
 }
 
++ (void)renameBackup:(ABBackupInfo *)backup fromViewController:(UIViewController *)controller completion:(dispatch_block_t)completion {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"修改备份名" message:@"用这个名字标记用途。留空就恢复成应用原名。上次使用时间会在恢复成功后自动记录。" preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
+        textField.text = backup.customName;
+        textField.placeholder = backup.displayName;
+        textField.clearButtonMode = UITextFieldViewModeWhileEditing;
+    }];
+    [alert addAction:[UIAlertAction actionWithTitle:@"保存" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+        NSError *error = nil;
+        NSString *name = alert.textFields.firstObject.text ?: @"";
+        if (![ABBackupEngine renameBackupAtURL:backup.fileURL name:name error:&error]) {
+            UIAlertController *failure = [UIAlertController alertControllerWithTitle:@"没有改成" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
+            [failure addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+            [self presentAlert:failure from:controller sourceView:nil];
+            return;
+        }
+        if (completion) {
+            completion();
+        }
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentAlert:alert from:controller sourceView:nil];
+}
+
 + (void)shareBackup:(ABBackupInfo *)backup fromViewController:(UIViewController *)controller sourceView:(UIView *)sourceView {
     if (!backup.fileURL) {
         return;
@@ -112,9 +142,9 @@
 }
 
 + (void)confirmDelete:(ABBackupInfo *)backup fromViewController:(UIViewController *)controller completion:(dispatch_block_t)completion {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"删除备份" message:[NSString stringWithFormat:@"删除「%@」的这份备份文件？应用里的数据不会变。", backup.displayName] preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"删除备份" message:[NSString stringWithFormat:@"删除「%@」这份备份？应用里的数据不会变。", backup.preferredTitle] preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"删除" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
-        [[NSFileManager defaultManager] removeItemAtURL:backup.fileURL error:nil];
+        [ABBackupEngine deleteBackupAtURL:backup.fileURL];
         if (completion) {
             completion();
         }
