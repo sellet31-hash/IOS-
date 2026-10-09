@@ -199,8 +199,23 @@
 }
 
 - (NSArray<NSString *> *)groupIdentifiersInExecutable:(NSURL *)executableURL {
-    NSData *data = [NSData dataWithContentsOfURL:executableURL options:NSDataReadingMappedIfSafe error:nil];
-    if (!data) {
+    NSError *error = nil;
+    NSFileHandle *handle = [NSFileHandle fileHandleForReadingFromURL:executableURL error:&error];
+    if (!handle) {
+        return @[];
+    }
+    NSData *data = nil;
+    @try {
+        unsigned long long size = handle.seekToEndOfFile;
+        unsigned long long window = 4ull * 1024ull * 1024ull;
+        unsigned long long offset = size > window ? size - window : 0;
+        [handle seekToFileOffset:offset];
+        data = [handle readDataOfLength:(NSUInteger)MIN(window, size)];
+    } @catch (NSException *exception) {
+        data = nil;
+    }
+    [handle closeFile];
+    if (data.length == 0) {
         return @[];
     }
     NSData *key = [@"com.apple.security.application-groups" dataUsingEncoding:NSUTF8StringEncoding];
@@ -209,8 +224,8 @@
         return @[];
     }
     NSUInteger start = range.location + range.length;
-    NSUInteger window = MIN((NSUInteger)8192, data.length - start);
-    return [self groupIdentifiersInData:[data subdataWithRange:NSMakeRange(start, window)]];
+    NSUInteger slice = MIN((NSUInteger)8192, data.length - start);
+    return [self groupIdentifiersInData:[data subdataWithRange:NSMakeRange(start, slice)]];
 }
 
 - (NSURL *)executableForBundleURL:(NSURL *)bundleURL {

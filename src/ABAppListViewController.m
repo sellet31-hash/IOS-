@@ -1,7 +1,6 @@
 #import "ABAppListViewController.h"
 #import "ABAppDetailViewController.h"
 #import "ABAppLibrary.h"
-#import "ABBackupEngine.h"
 #import "ABIcon.h"
 
 @interface ABAppListViewController () <UISearchResultsUpdating>
@@ -11,8 +10,6 @@
 @property (nonatomic) BOOL loaded;
 @property (nonatomic, strong) UISearchController *searchController;
 @property (nonatomic, strong) dispatch_queue_t loadQueue;
-@property (nonatomic, strong) dispatch_queue_t sizeQueue;
-@property (nonatomic, strong) NSMutableSet<NSString *> *sizing;
 @end
 
 @implementation ABAppListViewController
@@ -26,9 +23,7 @@
     self.title = @"应用";
     self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeAlways;
     self.searchText = @"";
-    self.sizing = [NSMutableSet set];
     self.loadQueue = dispatch_queue_create("com.local.appbackup.list", DISPATCH_QUEUE_SERIAL);
-    self.sizeQueue = dispatch_queue_create("com.local.appbackup.size", DISPATCH_QUEUE_SERIAL);
     self.searchController = [[UISearchController alloc] initWithSearchResultsController:nil];
     self.searchController.searchResultsUpdater = self;
     self.searchController.obscuresBackgroundDuringPresentation = NO;
@@ -102,51 +97,6 @@
     [self presentViewController:alert animated:YES completion:nil];
 }
 
-- (NSString *)sizeTextForApp:(ABAppInfo *)app {
-    ABBackupOptions *options = [ABBackupOptions currentOptions];
-    BOOL sameOptions = app.measuredExcludesCaches == options.excludesCaches && app.measuredIncludesGroups == options.includesAppGroups;
-    if ((app.sizeKnown || app.sizeFailed) && sameOptions) {
-        return app.sizeKnown ? ABFormatBytes(app.dataBytes) : @"—";
-    }
-    [self measureApp:app];
-    return @"…";
-}
-
-- (void)measureApp:(ABAppInfo *)app {
-    if ([self.sizing containsObject:app.bundleIdentifier]) {
-        return;
-    }
-    [self.sizing addObject:app.bundleIdentifier];
-    ABBackupOptions *options = [ABBackupOptions currentOptions];
-    dispatch_async(self.sizeQueue, ^{
-        uint64_t bytes = 0;
-        NSError *error = nil;
-        BOOL ok = [[ABBackupEngine sharedEngine] calculateSizeForApp:app options:options bytes:&bytes error:&error];
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [self.sizing removeObject:app.bundleIdentifier];
-            app.sizeKnown = ok;
-            app.sizeFailed = !ok;
-            app.dataBytes = bytes;
-            app.measuredExcludesCaches = options.excludesCaches;
-            app.measuredIncludesGroups = options.includesAppGroups;
-            [self reloadRowForBundleID:app.bundleIdentifier];
-        });
-    });
-}
-
-- (void)reloadRowForBundleID:(NSString *)bundleID {
-    NSArray<ABAppInfo *> *visible = [self visibleApps];
-    for (NSInteger index = 0; index < (NSInteger)visible.count; index++) {
-        if ([visible[index].bundleIdentifier isEqualToString:bundleID]) {
-            NSIndexPath *indexPath = [NSIndexPath indexPathForRow:index inSection:0];
-            if ([self.tableView.indexPathsForVisibleRows containsObject:indexPath]) {
-                [self.tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
-            }
-            return;
-        }
-    }
-}
-
 - (void)updateSearchResultsForSearchController:(UISearchController *)searchController {
     self.searchText = searchController.searchBar.text ?: @"";
     [self.tableView reloadData];
@@ -182,8 +132,7 @@
     ABAppInfo *app = [self visibleApps][indexPath.row];
     config.text = app.displayName;
     NSString *version = app.shortVersion.length ? app.shortVersion : app.bundleVersion;
-    NSString *detail = version.length ? [NSString stringWithFormat:@"%@ · %@", app.bundleIdentifier, version] : app.bundleIdentifier;
-    config.secondaryText = [NSString stringWithFormat:@"%@ · %@", detail, [self sizeTextForApp:app]];
+    config.secondaryText = version.length ? [NSString stringWithFormat:@"%@ · %@", app.bundleIdentifier, version] : app.bundleIdentifier;
     UIImage *icon = ABAppIcon(app.bundleIdentifier);
     if (icon) {
         config.image = icon;
