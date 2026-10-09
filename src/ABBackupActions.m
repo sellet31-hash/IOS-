@@ -54,6 +54,45 @@
     }];
 }
 
++ (void)confirmCleanApp:(ABAppInfo *)app fromViewController:(UIViewController *)controller completion:(dispatch_block_t)completion {
+    NSString *message = [NSString stringWithFormat:@"会先退出「%@」。接着会删除缓存、Cookie、WebKit 数据和常见统计目录，并重写偏好设置里的设备标识。文档和已有备份会保留。\n\n系统级 IDFV 和钥匙串里的标识无法通过清理改变。若仍被风控，请删除应用后重装，或换一份备份恢复。", app.displayName];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"一键清理" message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"清理" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
+        [self cleanApp:app fromViewController:controller completion:completion];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentAlert:alert from:controller sourceView:nil];
+}
+
++ (void)cleanApp:(ABAppInfo *)app fromViewController:(UIViewController *)controller completion:(dispatch_block_t)completion {
+    ABBackupEngine *engine = [ABBackupEngine sharedEngine];
+    ABProgressOverlay *overlay = [ABProgressOverlay showInView:[self hostViewForController:controller] title:@"正在清理" cancelHandler:^{
+        [engine cancel];
+    }];
+    [engine cleanApp:app progress:^(NSString *message, double fraction, uint64_t bytesDone, uint64_t bytesTotal) {
+        [overlay updateMessage:message fraction:fraction bytesDone:bytesDone bytesTotal:bytesTotal];
+    } completion:^(NSError *error) {
+        [overlay dismiss];
+        if (completion) {
+            completion();
+        }
+        if (error.code == ABErrorCancelled && [error.domain isEqualToString:ABErrorDomain]) {
+            return;
+        }
+        if (error) {
+            UIAlertController *failure = [UIAlertController alertControllerWithTitle:@"没有清理完" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
+            [failure addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+            [self presentAlert:failure from:controller sourceView:nil];
+            return;
+        }
+        UINotificationFeedbackGenerator *feedback = [UINotificationFeedbackGenerator new];
+        [feedback notificationOccurred:UINotificationFeedbackTypeSuccess];
+        UIAlertController *done = [UIAlertController alertControllerWithTitle:@"清理完成" message:[NSString stringWithFormat:@"已清理「%@」的缓存，并重置沙盒内的本地设备标识。请重新打开该应用。", app.displayName] preferredStyle:UIAlertControllerStyleAlert];
+        [done addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentAlert:done from:controller sourceView:nil];
+    }];
+}
+
 + (void)confirmRestore:(ABBackupInfo *)backup fromViewController:(UIViewController *)controller sourceView:(UIView *)sourceView completion:(dispatch_block_t)completion {
     NSString *when = ABFormatDate(backup.createdAt);
     NSString *message = [NSString stringWithFormat:@"会先退出「%@」，再用「%@」覆盖它现在的数据。缓存会被清掉。此操作不能撤销。", backup.displayName, backup.preferredTitle];

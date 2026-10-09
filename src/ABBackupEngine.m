@@ -907,6 +907,314 @@ static uint64_t ABFreeBytes(NSString *path) {
     return YES;
 }
 
+static BOOL ABKeyLooksLikeIdentity(NSString *key) {
+    NSString *lower = key.lowercaseString;
+    NSArray<NSString *> *needles = @[
+        @"device", @"uuid", @"guid", @"fingerprint", @"installid", @"install_id", @"idfv", @"idfa",
+        @"advert", @"visitor", @"clientid", @"client_id", @"machine", @"hardware", @"serial",
+        @"distinct", @"appsflyer", @"firebase", @"adjust", @"umeng", @"analytics", @"devid",
+        @"deviceid", @"machineid", @"uniqueid", @"unique_id", @"androidid", @"imei", @"oaid"
+    ];
+    for (NSString *needle in needles) {
+        if ([lower containsString:needle]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+static BOOL ABKeyLooksLikeCredential(NSString *key) {
+    NSString *lower = key.lowercaseString;
+    NSArray<NSString *> *skip = @[
+        @"token", @"auth", @"password", @"passwd", @"login", @"credential", @"secret", @"oauth",
+        @"refresh", @"access", @"cookie", @"jwt", @"passwd", @"sessionkey", @"privatekey", @"apikey"
+    ];
+    for (NSString *needle in skip) {
+        if ([lower containsString:needle]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+static BOOL ABStringLooksLikeIdentifier(NSString *value) {
+    if (value.length < 8 || value.length > 128) {
+        return NO;
+    }
+    NSCharacterSet *hex = [NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdefABCDEF-"];
+    NSCharacterSet *invalid = [hex invertedSet];
+    if ([value rangeOfCharacterFromSet:invalid].location == NSNotFound) {
+        return YES;
+    }
+    if (value.length == 36 && [value characterAtIndex:8] == '-' && [value characterAtIndex:13] == '-') {
+        return YES;
+    }
+    return NO;
+}
+
+static NSString *ABRandomIdentifierString(void) {
+    return [[NSUUID UUID] UUIDString];
+}
+
+static id ABScrubPlistObject(id object) {
+    if ([object isKindOfClass:[NSDictionary class]]) {
+        NSMutableDictionary *result = [NSMutableDictionary dictionaryWithCapacity:[(NSDictionary *)object count]];
+        [(NSDictionary *)object enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL *stop) {
+            NSString *name = [key isKindOfClass:[NSString class]] ? key : [key description];
+            if (ABKeyLooksLikeIdentity(name) && !ABKeyLooksLikeCredential(name)) {
+                if ([value isKindOfClass:[NSString class]] && ABStringLooksLikeIdentifier(value)) {
+                    result[key] = ABRandomIdentifierString();
+                    return;
+                }
+                if ([value isKindOfClass:[NSDictionary class]] || [value isKindOfClass:[NSArray class]]) {
+                    result[key] = ABScrubPlistObject(value);
+                    return;
+                }
+                if ([value isKindOfClass:[NSString class]]) {
+                    result[key] = ABRandomIdentifierString();
+                    return;
+                }
+            }
+            result[key] = ABScrubPlistObject(value);
+        }];
+        return result;
+    }
+    if ([object isKindOfClass:[NSArray class]]) {
+        NSMutableArray *result = [NSMutableArray arrayWithCapacity:[(NSArray *)object count]];
+        for (id value in (NSArray *)object) {
+            [result addObject:ABScrubPlistObject(value)];
+        }
+        return result;
+    }
+    return object;
+}
+
+static BOOL ABScrubPreferencesInDirectory(NSString *directory) {
+    NSFileManager *manager = [NSFileManager defaultManager];
+    BOOL isDirectory = NO;
+    if (![manager fileExistsAtPath:directory isDirectory:&isDirectory] || !isDirectory) {
+        return YES;
+    }
+    NSArray<NSURL *> *files = [manager contentsOfDirectoryAtURL:[NSURL fileURLWithPath:directory] includingPropertiesForKeys:nil options:0 error:nil];
+    for (NSURL *file in files) {
+        if (![[file.pathExtension lowercaseString] isEqualToString:@"plist"]) {
+            continue;
+        }
+        NSDictionary *plist = [NSDictionary dictionaryWithContentsOfURL:file];
+        if (!plist) {
+            continue;
+        }
+        id scrubbed = ABScrubPlistObject(plist);
+        if (![scrubbed writeToURL:file atomically:YES]) {
+            return NO;
+        }
+    }
+    return YES;
+}
+
+static BOOL ABFolderLooksLikeTracker(NSString *name) {
+    NSString *lower = name.lowercaseString;
+    NSArray<NSString *> *needles = @[
+        @"google", @"firebase", @"appsflyer", @"adjust", @"facebook", @"umeng", @"sensors",
+        @"analytics", @"crashlytics", @"talkingdata", @"bugly", @"tencent", @"bytedance", @"tiktok",
+        @"shopee_track", @"tracking"
+    ];
+    for (NSString *needle in needles) {
+        if ([lower containsString:needle]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+static BOOL ABRemoveTrackerSupportInDirectory(NSString *root) {
+    NSString *support = [root stringByAppendingPathComponent:@"Library/Application Support"];
+    NSFileManager *manager = [NSFileManager defaultManager];
+    BOOL isDirectory = NO;
+    if (![manager fileExistsAtPath:support isDirectory:&isDirectory] || !isDirectory) {
+        return YES;
+    }
+    NSArray<NSURL *> *children = [manager contentsOfDirectoryAtURL:[NSURL fileURLWithPath:support] includingPropertiesForKeys:nil options:0 error:nil];
+    for (NSURL *child in children) {
+        if (ABFolderLooksLikeTracker(child.lastPathComponent)) {
+            [manager removeItemAtURL:child error:nil];
+        }
+    }
+    return YES;
+}
+
+static void ABCollectCleanTargetsForRoot(NSString *root, NSMutableArray<NSString *> *removeOnly, NSMutableArray<NSString *> *recreateEmpty) {
+    if (root.length == 0) {
+        return;
+    }
+    NSFileManager *manager = [NSFileManager defaultManager];
+    for (NSString *relative in @[
+        @"tmp", @"Library/Caches", @"Library/SplashBoard", @"Library/WebKit", @"Library/Cookies",
+        @"Library/HTTPStorages", @"Library/Saved Application State", @"Library/com.apple.WebKit.WebContent"
+    ]) {
+        NSString *path = [root stringByAppendingPathComponent:relative];
+        if (![manager fileExistsAtPath:path]) {
+            continue;
+        }
+        if ([relative isEqualToString:@"tmp"] || [relative hasPrefix:@"Library/Caches"] || [relative isEqualToString:@"Library/SplashBoard"]) {
+            [recreateEmpty addObject:path];
+        } else {
+            [removeOnly addObject:path];
+        }
+    }
+}
+
+- (BOOL)removeDirectoryFully:(NSString *)path error:(NSError **)error {
+    if (path.length == 0) {
+        return YES;
+    }
+    NSFileManager *manager = [NSFileManager defaultManager];
+    if (![manager fileExistsAtPath:path]) {
+        return YES;
+    }
+    NSError *removeError = nil;
+    if (![manager removeItemAtPath:path error:&removeError]) {
+        if (error) {
+            *error = ABMakeError(ABErrorFailed, [NSString stringWithFormat:@"无法删除 %@：%@", path.lastPathComponent, removeError.localizedDescription ?: @"未知原因"]);
+        }
+        return NO;
+    }
+    return YES;
+}
+
+- (BOOL)removeCacheDirectory:(NSString *)path error:(NSError **)error {
+    if (path.length == 0) {
+        return YES;
+    }
+    NSFileManager *manager = [NSFileManager defaultManager];
+    BOOL isDirectory = NO;
+    if (![manager fileExistsAtPath:path isDirectory:&isDirectory]) {
+        return YES;
+    }
+    NSError *removeError = nil;
+    if (![manager removeItemAtPath:path error:&removeError]) {
+        if (error) {
+            *error = ABMakeError(ABErrorFailed, [NSString stringWithFormat:@"无法删除 %@：%@", path.lastPathComponent, removeError.localizedDescription ?: @"未知原因"]);
+        }
+        return NO;
+    }
+    if (![manager createDirectoryAtPath:path withIntermediateDirectories:YES attributes:nil error:&removeError]) {
+        if (error) {
+            *error = ABMakeError(ABErrorFailed, [NSString stringWithFormat:@"无法重建 %@：%@", path.lastPathComponent, removeError.localizedDescription ?: @"未知原因"]);
+        }
+        return NO;
+    }
+    ABRepairOwnership(path);
+    return YES;
+}
+
+- (BOOL)performCleanForApp:(ABAppInfo *)app progress:(ABProgressBlock)progress error:(NSError **)error {
+    if ([app.bundleIdentifier isEqualToString:ABBundleIdentifier]) {
+        if (error) {
+            *error = ABMakeError(ABErrorFailed, @"不能清理「应用备份」自己");
+        }
+        return NO;
+    }
+    if (![[ABAppLibrary sharedLibrary] canReadOtherApps]) {
+        if (error) {
+            *error = ABMakeError(ABErrorAccess, @"无法清理其他应用。请用 TrollStore 安装本应用。");
+        }
+        return NO;
+    }
+    ABContainerLocation *location = [[ABAppLibrary sharedLibrary] locationForBundleIdentifier:app.bundleIdentifier];
+    NSURL *container = location.dataContainerURL ?: app.dataContainerURL;
+    if (!container) {
+        if (error) {
+            *error = ABMakeError(ABErrorFailed, @"这个应用还没有数据目录，请先打开一次");
+        }
+        return NO;
+    }
+    [self report:progress message:@"正在退出应用" done:0 total:1 force:YES];
+    ABStopApplication(app.bundleIdentifier, location.bundleURL ?: app.bundleURL);
+    NSMutableArray<NSString *> *removeOnly = [NSMutableArray array];
+    NSMutableArray<NSString *> *recreateEmpty = [NSMutableArray array];
+    NSMutableArray<NSString *> *roots = [NSMutableArray arrayWithObject:container.path];
+    for (NSURL *groupURL in location.groupContainers.allValues) {
+        [roots addObject:groupURL.path];
+    }
+    for (NSString *root in roots) {
+        ABCollectCleanTargetsForRoot(root, removeOnly, recreateEmpty);
+    }
+    NSUInteger total = removeOnly.count + recreateEmpty.count + roots.count + 1;
+    NSUInteger index = 0;
+    for (NSString *path in removeOnly) {
+        if (self.cancelled) {
+            if (error) {
+                *error = ABMakeError(ABErrorCancelled, @"已取消");
+            }
+            return NO;
+        }
+        index++;
+        [self report:progress message:[NSString stringWithFormat:@"正在删除 %@", path.lastPathComponent] done:index total:MAX(total, 1) force:YES];
+        if (![self removeDirectoryFully:path error:error]) {
+            return NO;
+        }
+    }
+    for (NSString *path in recreateEmpty) {
+        if (self.cancelled) {
+            if (error) {
+                *error = ABMakeError(ABErrorCancelled, @"已取消");
+            }
+            return NO;
+        }
+        index++;
+        [self report:progress message:[NSString stringWithFormat:@"正在清理 %@", path.lastPathComponent] done:index total:MAX(total, 1) force:YES];
+        if (![self removeCacheDirectory:path error:error]) {
+            return NO;
+        }
+    }
+    for (NSString *root in roots) {
+        if (self.cancelled) {
+            if (error) {
+                *error = ABMakeError(ABErrorCancelled, @"已取消");
+            }
+            return NO;
+        }
+        index++;
+        [self report:progress message:@"正在重置本地标识" done:index total:MAX(total, 1) force:YES];
+        if (!ABScrubPreferencesInDirectory([root stringByAppendingPathComponent:@"Library/Preferences"])) {
+            if (error) {
+                *error = ABMakeError(ABErrorFailed, @"无法改写偏好设置里的设备标识");
+            }
+            return NO;
+        }
+        ABRemoveTrackerSupportInDirectory(root);
+    }
+    index++;
+    [self report:progress message:@"正在修正权限" done:index total:MAX(total, 1) force:YES];
+    ABRepairDataContainer(container.path);
+    for (NSString *root in roots) {
+        if (![root isEqualToString:container.path]) {
+            ABRepairOwnership(root);
+        }
+    }
+    [self report:progress message:@"清理完成" done:total total:MAX(total, 1) force:YES];
+    return YES;
+}
+
+- (void)cleanApp:(ABAppInfo *)app progress:(ABProgressBlock)progress completion:(void (^)(NSError *error))completion {
+    NSError *startError = nil;
+    if (![self beginOperation:&startError]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            completion(startError);
+        });
+        return;
+    }
+    dispatch_async(self.workQueue, ^{
+        NSError *workError = nil;
+        [self performCleanForApp:app progress:progress error:&workError];
+        [self endOperation];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            completion(workError);
+        });
+    });
+}
+
 - (void)backupApp:(ABAppInfo *)app options:(ABBackupOptions *)options progress:(ABProgressBlock)progress completion:(ABBackupCompletion)completion {
     NSError *startError = nil;
     if (![self beginOperation:&startError]) {

@@ -25,6 +25,9 @@ typedef void (^ABRestoreCompletion)(NSArray<NSString *> *_Nullable warnings, NSE
           options:(ABBackupOptions *)options
          progress:(nullable ABProgressBlock)progress
        completion:(ABBackupCompletion)completion;
+- (void)cleanApp:(ABAppInfo *)app
+        progress:(nullable ABProgressBlock)progress
+      completion:(void (^)(NSError *_Nullable error))completion;
 - (void)restoreBackupAtURL:(NSURL *)archiveURL
         bundleIdentifier:(NSString *)bundleIdentifier
                 progress:(nullable ABProgressBlock)progress

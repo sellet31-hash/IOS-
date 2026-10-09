@@ -195,7 +195,7 @@
     if (section == 2) {
         return MAX((NSInteger)self.backups.count, 1);
     }
-    return section == 0 ? 1 : 2;
+    return 2;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
@@ -209,8 +209,11 @@
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    if (section == 0 && ![self hasContainer]) {
-        return @"系统还没有给这个应用创建数据目录。先打开一次该应用。";
+    if (section == 0) {
+        if (![self hasContainer]) {
+            return @"系统还没有给这个应用创建数据目录。先打开一次该应用。";
+        }
+        return @"会删除缓存、Cookie、WebKit 和常见统计目录，并重写偏好设置里的设备标识。系统 IDFV 和钥匙串无法在这里改掉。";
     }
     if (section == 1) {
         return @"默认跳过缓存和临时文件。钥匙串不会备份，部分应用恢复后需要重新登录。";
@@ -235,15 +238,29 @@
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     if (indexPath.section == 0) {
-        UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"backup"];
-        if (!cell) {
-            cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"backup"];
-        }
         BOOL enabled = [self hasContainer];
-        cell.textLabel.text = @"开始备份";
-        cell.textLabel.textColor = enabled ? ABAccentColor() : UIColor.tertiaryLabelColor;
-        cell.imageView.image = [UIImage systemImageNamed:@"arrow.down.doc"];
-        cell.imageView.tintColor = enabled ? ABAccentColor() : UIColor.tertiaryLabelColor;
+        if (indexPath.row == 0) {
+            UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"backup"];
+            if (!cell) {
+                cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"backup"];
+            }
+            cell.textLabel.text = @"开始备份";
+            cell.textLabel.textColor = enabled ? ABAccentColor() : UIColor.tertiaryLabelColor;
+            cell.imageView.image = [UIImage systemImageNamed:@"arrow.down.doc"];
+            cell.imageView.tintColor = enabled ? ABAccentColor() : UIColor.tertiaryLabelColor;
+            cell.selectionStyle = enabled ? UITableViewCellSelectionStyleDefault : UITableViewCellSelectionStyleNone;
+            return cell;
+        }
+        UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"clean"];
+        if (!cell) {
+            cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"clean"];
+        }
+        cell.textLabel.text = @"一键清理";
+        cell.detailTextLabel.text = @"清缓存并重置沙盒内设备标识";
+        cell.detailTextLabel.textColor = UIColor.secondaryLabelColor;
+        cell.textLabel.textColor = enabled ? UIColor.systemOrangeColor : UIColor.tertiaryLabelColor;
+        cell.imageView.image = [UIImage systemImageNamed:@"trash"];
+        cell.imageView.tintColor = enabled ? UIColor.systemOrangeColor : UIColor.tertiaryLabelColor;
         cell.selectionStyle = enabled ? UITableViewCellSelectionStyleDefault : UITableViewCellSelectionStyleNone;
         return cell;
     }
@@ -301,9 +318,13 @@
         if (![self hasContainer]) {
             return;
         }
-        [ABBackupActions backupApp:self.app fromViewController:self completion:^{
-            [self refreshLocationAndBackups];
-        }];
+        if (indexPath.row == 0) {
+            [ABBackupActions backupApp:self.app fromViewController:self completion:^{
+                [self refreshLocationAndBackups];
+            }];
+        } else {
+            [ABBackupActions confirmCleanApp:self.app fromViewController:self completion:nil];
+        }
         return;
     }
     if (![self isHistoryRow:indexPath]) {
