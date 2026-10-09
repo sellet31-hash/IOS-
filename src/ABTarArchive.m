@@ -52,12 +52,14 @@ static BOOL ABTarFailed(abtar_status status, NSString *path, NSError **error) {
                  shouldStop:(BOOL (^)(void))shouldStop
                       error:(NSError **)error {
     ABTarBox *box = [ABTarBox new];
+    __weak ABTarBox *weakBox = box;
     box.shouldStop = shouldStop;
     __block uint64_t written = 0;
     box.onBytes = ^(int64_t count) {
+        ABTarBox *currentBox = weakBox;
         written = (uint64_t)MAX(count, 0);
         if (onProgress) {
-            onProgress(box.currentPath ?: @"", written);
+            onProgress(currentBox.currentPath ?: @"", written);
         }
     };
     abtar_writer *writer = NULL;
@@ -182,11 +184,16 @@ static BOOL ABTarFailed(abtar_status status, NSString *path, NSError **error) {
         return NO;
     }
     ABTarBox *box = [ABTarBox new];
+    __weak ABTarBox *weakBox = box;
     box.shouldStop = shouldStop;
     box.onBytes = ^(int64_t count) {
-        box.lastWritten = (uint64_t)MAX(count, 0);
+        ABTarBox *currentBox = weakBox;
+        if (!currentBox) {
+            return;
+        }
+        currentBox.lastWritten = (uint64_t)MAX(count, 0);
         if (onProgress) {
-            onProgress(box.currentPath ?: @"", box.lastWritten);
+            onProgress(currentBox.currentPath ?: @"", currentBox.lastWritten);
         }
     };
     abtar_reader *reader = NULL;
