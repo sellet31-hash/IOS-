@@ -16,6 +16,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) BOOL accessDenied;
 + (instancetype)sharedLibrary;
 - (void)reload;
+- (BOOL)canReadOtherApps;
 - (NSArray<ABAppInfo *> *)installedApps;
 - (nullable ABAppInfo *)appForBundleIdentifier:(NSString *)bundleIdentifier;
 - (nullable ABContainerLocation *)locationForBundleIdentifier:(NSString *)bundleIdentifier;

@@ -13,7 +13,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (BOOL)summarizeArchiveAtURL:(NSURL *)archiveURL
                       manifest:(NSDictionary *_Nullable *_Nullable)manifest
-            uncompressedBytes:(uint64_t *)uncompressedBytes
+            uncompressedBytes:(uint64_t *_Nullable)uncompressedBytes
                         error:(NSError *_Nullable *_Nullable)error;
 
 + (BOOL)extractArchiveAtURL:(NSURL *)archiveURL
