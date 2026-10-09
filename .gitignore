@@ -1,0 +1,8 @@
+.theos/
+packages/
+test-out/
+.DS_Store
+*.ipa
+*.deb
+*.exe
+*.o

@@ -1,0 +1,9 @@
+Package: com.local.appbackup
+Name: App Backup
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Backup and restore app data on iOS 15
+Maintainer: local
+Author: local
+Section: Utilities
+Depends: firmware (>= 15.0)

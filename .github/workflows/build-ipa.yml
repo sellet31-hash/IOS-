@@ -1,0 +1,39 @@
+name: Build TrollStore IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: brew install ldid xz fakeroot
+
+      - name: Install Theos
+        run: |
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$RUNNER_TEMP/theos"
+          echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
+
+      - name: Install iOS SDK
+        run: |
+          mkdir -p "$THEOS/sdks"
+          curl -L --fail --retry 3 -o "$RUNNER_TEMP/iPhoneOS16.5.sdk.tar.xz" \
+            https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz
+          tar -xf "$RUNNER_TEMP/iPhoneOS16.5.sdk.tar.xz" -C "$THEOS/sdks"
+
+      - name: Build IPA
+        run: make stage FINALPACKAGE=1
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: AppBackup
+          path: packages/AppBackup.ipa
+          if-no-files-found: error
