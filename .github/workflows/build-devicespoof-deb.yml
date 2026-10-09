@@ -1,0 +1,45 @@
+name: Build DeviceSpoof deb
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'DeviceSpoof/**'
+      - '.github/workflows/build-devicespoof-deb.yml'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: DeviceSpoof
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: brew install ldid xz dpkg
+
+      - name: Install Theos
+        run: |
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$RUNNER_TEMP/theos"
+          echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
+
+      - name: Install iOS SDK
+        run: |
+          mkdir -p "$THEOS/sdks"
+          curl -L --fail --retry 3 -o "$RUNNER_TEMP/iPhoneOS16.5.sdk.tar.xz" \
+            https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz
+          tar -xf "$RUNNER_TEMP/iPhoneOS16.5.sdk.tar.xz" -C "$THEOS/sdks"
+
+      - name: Build deb
+        run: make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeviceSpoof-deb
+          path: DeviceSpoof/packages/*.deb
+          if-no-files-found: error
