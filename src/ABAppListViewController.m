@@ -169,19 +169,21 @@
     config.imageProperties.maximumSize = CGSizeMake(40, 40);
     config.imageProperties.reservedLayoutSize = CGSizeMake(40, 40);
     config.imageProperties.cornerRadius = 8;
+    cell.accessoryView = nil;
     if (!self.loaded) {
         config.text = @"正在读取已安装的应用";
         config.secondaryText = nil;
         config.image = nil;
         cell.contentConfiguration = config;
-        cell.accessories = @[];
+        cell.accessoryType = UITableViewCellAccessoryNone;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
         return cell;
     }
     ABAppInfo *app = [self visibleApps][indexPath.row];
     config.text = app.displayName;
     NSString *version = app.shortVersion.length ? app.shortVersion : app.bundleVersion;
-    config.secondaryText = version.length ? [NSString stringWithFormat:@"%@ · %@", app.bundleIdentifier, version] : app.bundleIdentifier;
+    NSString *detail = version.length ? [NSString stringWithFormat:@"%@ · %@", app.bundleIdentifier, version] : app.bundleIdentifier;
+    config.secondaryText = [NSString stringWithFormat:@"%@ · %@", detail, [self sizeTextForApp:app]];
     UIImage *icon = ABAppIcon(app.bundleIdentifier);
     if (icon) {
         config.image = icon;
@@ -191,9 +193,7 @@
         config.imageProperties.tintColor = UIColor.secondaryLabelColor;
     }
     cell.contentConfiguration = config;
-    UICellAccessoryLabel *size = [[UICellAccessoryLabel alloc] initWithText:[self sizeTextForApp:app]];
-    UICellAccessoryDisclosureIndicator *chevron = [UICellAccessoryDisclosureIndicator new];
-    cell.accessories = @[size, chevron];
+    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     return cell;
 }
