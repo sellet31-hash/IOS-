@@ -9,10 +9,10 @@
 #import <pwd.h>
 #import <signal.h>
 #import <sys/stat.h>
+#import <libproc.h>
+#import <sys/proc.h>
 #import <sys/sysctl.h>
 #import <unistd.h>
-
-extern int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
 
 static const uint64_t ABSpaceMargin = 64ull * 1024ull * 1024ull;
 
@@ -363,7 +363,7 @@ static BOOL ABPathMatchesBundle(NSString *processPath, NSString *bundlePath) {
 
 static void ABKillProcessesForBundle(NSURL *bundleURL) {
     NSString *bundlePath = bundleURL.path;
-    if (!ABPathMatchesBundle(bundlePath, bundlePath)) {
+    if (bundlePath.length == 0) {
         return;
     }
     int name[3] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL};
@@ -1197,7 +1197,7 @@ static void ABCollectCleanTargetsForRoot(NSString *root, NSMutableArray<NSString
     return YES;
 }
 
-- (void)cleanApp:(ABAppInfo *)app progress:(ABProgressBlock)progress completion:(void (^)(NSError *error))completion {
+- (void)cleanApp:(ABAppInfo *)app progress:(ABProgressBlock)progress completion:(void (^)(NSError *_Nullable error))completion {
     NSError *startError = nil;
     if (![self beginOperation:&startError]) {
         dispatch_async(dispatch_get_main_queue(), ^{
