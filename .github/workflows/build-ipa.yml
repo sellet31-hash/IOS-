@@ -6,6 +6,14 @@ on:
     branches:
       - main
       - master
+    paths:
+      - 'src/**'
+      - 'Resources/**'
+      - 'entitlements.plist'
+      - 'Makefile'
+      - 'control'
+      - 'scripts/**'
+      - '.github/workflows/build-ipa.yml'
 
 jobs:
   build:
