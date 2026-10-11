@@ -36,6 +36,12 @@
 - `uname`：`machine`
 - `UIScreen`：主屏 bounds / scale / nativeBounds（与 iPhone 11 一致）
 
+## 闪退排查
+
+1. 确认已装 **ElleKit**（多巴胺）或 Substitute，并 respring。
+2. 若仍闪退：在 Choicy 里只对 `com.beeasy.shopee.tw` 启用 DeviceSpoof，禁用其它注入冲突项。
+3. **1.0.1** 起修复了在 `UIScreen` Hook 里调用 `mainScreen` 导致的递归闪退；请用最新 deb 覆盖安装。
+
 ## 限制
 
 - **不修改** iOS 版本、IDFV、钥匙串、IDFA。

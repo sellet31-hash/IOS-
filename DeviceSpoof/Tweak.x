@@ -8,12 +8,14 @@
 
 static CFTypeRef (*orig_MGCopyAnswer)(CFStringRef property);
 
+/// Cached in +mainScreen; never call mainScreen from hooked -bounds/-scale (infinite recursion).
+static UIScreen *gDSPMainScreen = nil;
+
 static BOOL DSPShouldSpoofScreen(UIScreen *screen) {
-    if (![DSPProfile isSpoofEnabled]) {
+    if (!screen || ![DSPProfile isSpoofEnabled]) {
         return NO;
     }
-    UIScreen *main = [UIScreen mainScreen];
-    return main != nil && (screen == main || screen == nil);
+    return gDSPMainScreen != nil && screen == gDSPMainScreen;
 }
 
 static BOOL DSPApplyStringAnswer(CFStringRef question, const char **keys, CFStringRef fake, CFTypeRef *out) {
@@ -122,6 +124,14 @@ static int DSP_uname(struct utsname *buf) {
 
 %hook UIScreen
 
++ (UIScreen *)mainScreen {
+    UIScreen *screen = %orig;
+    if (screen && !gDSPMainScreen) {
+        gDSPMainScreen = screen;
+    }
+    return screen;
+}
+
 - (CGRect)bounds {
     if (DSPShouldSpoofScreen(self)) {
         return [DSPProfile screenBounds];
@@ -152,18 +162,32 @@ static int DSP_uname(struct utsname *buf) {
 
 %end
 
-%ctor {
-    [DSPProfile reloadPreferences];
-
-    void *gestalt = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
-    if (gestalt) {
-        void *sym = dlsym(gestalt, "MGCopyAnswer");
-        if (sym) {
-            MSHookFunction(sym, (void *)DSP_MGCopyAnswer, (void **)&orig_MGCopyAnswer);
+static void DSPInstallHooks(void) {
+    if (!orig_MGCopyAnswer) {
+        void *gestalt = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
+        if (!gestalt) {
+            gestalt = dlopen("/System/Library/Frameworks/MobileGestalt.framework/MobileGestalt", RTLD_LAZY);
+        }
+        if (gestalt) {
+            void *sym = dlsym(gestalt, "MGCopyAnswer");
+            if (sym) {
+                MSHookFunction(sym, (void *)DSP_MGCopyAnswer, (void **)&orig_MGCopyAnswer);
+            }
         }
     }
 
-    MSHookFunction((void *)sysctlbyname, (void *)DSP_sysctlbyname, (void **)&orig_sysctlbyname);
-    MSHookFunction((void *)sysctl, (void *)DSP_sysctl, (void **)&orig_sysctl);
-    MSHookFunction((void *)uname, (void *)DSP_uname, (void **)&orig_uname);
+    if (!orig_sysctlbyname) {
+        MSHookFunction((void *)sysctlbyname, (void *)DSP_sysctlbyname, (void **)&orig_sysctlbyname);
+    }
+    if (!orig_sysctl) {
+        MSHookFunction((void *)sysctl, (void *)DSP_sysctl, (void **)&orig_sysctl);
+    }
+    if (!orig_uname) {
+        MSHookFunction((void *)uname, (void *)DSP_uname, (void **)&orig_uname);
+    }
+}
+
+%ctor {
+    [DSPProfile reloadPreferences];
+    DSPInstallHooks();
 }
