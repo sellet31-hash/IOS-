@@ -9,10 +9,10 @@
 #import <pwd.h>
 #import <signal.h>
 #import <sys/stat.h>
-#import <libproc.h>
-#import <sys/proc.h>
 #import <sys/sysctl.h>
 #import <unistd.h>
+
+extern int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
 
 static const uint64_t ABSpaceMargin = 64ull * 1024ull * 1024ull;
 
