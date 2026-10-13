@@ -1,4 +1,5 @@
 #import <CoreFoundation/CoreFoundation.h>
+#import <Security/Security.h>
 #import <UIKit/UIKit.h>
 #import <dlfcn.h>
 #import <mach-o/dyld.h>
@@ -19,6 +20,7 @@ static int (*orig_sysctlbyname)(const char *, void *, size_t *, void *, size_t);
 static int (*orig_sysctl)(int *, unsigned int, void *, size_t *, void *, size_t);
 static int (*orig_uname)(struct utsname *);
 static void *(*orig_dlsym)(void *, const char *);
+static OSStatus (*orig_SecItemCopyMatching)(CFDictionaryRef, CFTypeRef *);
 
 static CFStringRef kDSPProductTypeKey;
 static CFStringRef kDSPHardwareModelKey;
@@ -29,6 +31,11 @@ static CFStringRef kDSPProductTypeValue;
 static CFStringRef kDSPHardwareModelValue;
 static CFStringRef kDSPSerialNumberValue;
 static CFStringRef kDSPMLBSerialNumberValue;
+static CFStringRef kDSPInstallSessionValue;
+static CFStringRef kDSPInstallUUIDKey;
+static CFStringRef kDSPInstallationUUIDKey;
+static CFStringRef kDSPSystemSessionUUIDKey;
+static CFStringRef kDSPBootSessionUUIDKey;
 static const char *kDSPMachineUTF8;
 static const char *kDSPModelUTF8;
 
@@ -54,7 +61,57 @@ static CFStringRef DSPAnswer(CFStringRef property) {
     if (kDSPMLBSerialNumberKey && CFEqual(property, kDSPMLBSerialNumberKey)) {
         return kDSPMLBSerialNumberValue;
     }
+    if (kDSPInstallSessionValue) {
+        if ((kDSPInstallUUIDKey && CFEqual(property, kDSPInstallUUIDKey)) ||
+            (kDSPInstallationUUIDKey && CFEqual(property, kDSPInstallationUUIDKey)) ||
+            (kDSPSystemSessionUUIDKey && CFEqual(property, kDSPSystemSessionUUIDKey)) ||
+            (kDSPBootSessionUUIDKey && CFEqual(property, kDSPBootSessionUUIDKey))) {
+            return kDSPInstallSessionValue;
+        }
+    }
     return NULL;
+}
+
+static BOOL DSPAttrContainsNeedle(CFDictionaryRef query, CFStringRef attrKey) {
+    CFTypeRef value = CFDictionaryGetValue(query, attrKey);
+    if (!value || CFGetTypeID(value) != CFStringGetTypeID()) {
+        return NO;
+    }
+    NSString *lower = [(__bridge NSString *)value lowercaseString];
+    NSArray<NSString *> *needles = @[
+        @"device", @"fingerprint", @"install", @"visitor", @"distinct", @"shopee",
+        @"machine", @"hardware", @"devid", @"uuid", @"client", @"track"
+    ];
+    for (NSString *needle in needles) {
+        if ([lower containsString:needle]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+static BOOL DSPQueryIsPersistedDeviceSecret(CFDictionaryRef query) {
+    if (!query || ![DSPProfile simulateFreshInstall]) {
+        return NO;
+    }
+    CFTypeRef klass = CFDictionaryGetValue(query, kSecClass);
+    if (klass == kSecClassCertificate || klass == kSecClassIdentity) {
+        return NO;
+    }
+    return DSPAttrContainsNeedle(query, kSecAttrAccount) ||
+           DSPAttrContainsNeedle(query, kSecAttrService) ||
+           DSPAttrContainsNeedle(query, kSecAttrLabel) ||
+           DSPAttrContainsNeedle(query, kSecAttrGeneric);
+}
+
+static OSStatus DSP_SecItemCopyMatching(CFDictionaryRef query, CFTypeRef *result) {
+    if (DSPQueryIsPersistedDeviceSecret(query)) {
+        if (result) {
+            *result = NULL;
+        }
+        return errSecItemNotFound;
+    }
+    return orig_SecItemCopyMatching ? orig_SecItemCopyMatching(query, result) : errSecParam;
 }
 
 static CFTypeRef DSP_MGCopyAnswer(CFStringRef property) {
@@ -123,6 +180,9 @@ static void *DSP_dlsym(void *handle, const char *symbol) {
         }
         if (strcmp(symbol, "uname") == 0 && orig_uname) {
             return (void *)DSP_uname;
+        }
+        if (strcmp(symbol, "SecItemCopyMatching") == 0 && orig_SecItemCopyMatching) {
+            return (void *)DSP_SecItemCopyMatching;
         }
     }
     return orig_dlsym ? orig_dlsym(handle, symbol) : NULL;
@@ -201,7 +261,7 @@ static void DSPRebindImage(const struct mach_header *header, intptr_t slide, con
 }
 
 static void DSPRebindLoadedImages(void) {
-    DSPBind binds[5];
+    DSPBind binds[6];
     unsigned int count = 0;
     if (orig_MGCopyAnswer) {
         binds[count++] = (DSPBind){(void *)orig_MGCopyAnswer, (void *)DSP_MGCopyAnswer};
@@ -217,6 +277,9 @@ static void DSPRebindLoadedImages(void) {
     }
     if (orig_dlsym) {
         binds[count++] = (DSPBind){(void *)orig_dlsym, (void *)DSP_dlsym};
+    }
+    if (orig_SecItemCopyMatching) {
+        binds[count++] = (DSPBind){(void *)orig_SecItemCopyMatching, (void *)DSP_SecItemCopyMatching};
     }
     if (count == 0) {
         return;
@@ -243,6 +306,11 @@ static void DSPPrepareAnswers(void) {
     kDSPHardwareModelValue = CFStringCreateWithCString(NULL, kDSPModelUTF8, kCFStringEncodingUTF8);
     kDSPSerialNumberValue = CFStringCreateWithCString(NULL, [DSPProfile serialNumberUTF8], kCFStringEncodingUTF8);
     kDSPMLBSerialNumberValue = CFStringCreateWithCString(NULL, [DSPProfile mlbSerialUTF8], kCFStringEncodingUTF8);
+    kDSPInstallUUIDKey = CFStringCreateWithCString(NULL, "InstallUUID", kCFStringEncodingUTF8);
+    kDSPInstallationUUIDKey = CFStringCreateWithCString(NULL, "InstallationUUID", kCFStringEncodingUTF8);
+    kDSPSystemSessionUUIDKey = CFStringCreateWithCString(NULL, "SystemSessionUUID", kCFStringEncodingUTF8);
+    kDSPBootSessionUUIDKey = CFStringCreateWithCString(NULL, "BootSessionUUID", kCFStringEncodingUTF8);
+    kDSPInstallSessionValue = CFStringCreateWithCString(NULL, [DSPProfile installSessionUUIDUTF8], kCFStringEncodingUTF8);
 }
 
 %hook UIDevice
@@ -271,6 +339,7 @@ static void DSPResolveOriginals(void) {
     orig_sysctl = (int (*)(int *, unsigned int, void *, size_t *, void *, size_t))dlsym(RTLD_DEFAULT, "sysctl");
     orig_uname = (int (*)(struct utsname *))dlsym(RTLD_DEFAULT, "uname");
     orig_dlsym = (void *(*)(void *, const char *))dlsym(RTLD_DEFAULT, "dlsym");
+    orig_SecItemCopyMatching = (OSStatus (*)(CFDictionaryRef, CFTypeRef *))dlsym(RTLD_DEFAULT, "SecItemCopyMatching");
 }
 
 %ctor {

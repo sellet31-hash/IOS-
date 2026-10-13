@@ -8,7 +8,7 @@ TWEAK_NAME := DeviceSpoof
 
 DeviceSpoof_FILES := Tweak.x src/DSPProfile.m
 DeviceSpoof_CFLAGS := -fobjc-arc -Isrc
-DeviceSpoof_FRAMEWORKS := UIKit Foundation CoreFoundation CoreGraphics
+DeviceSpoof_FRAMEWORKS := UIKit Security Foundation CoreFoundation CoreGraphics
 DeviceSpoof_INSTALL_PATH := /Library/MobileSubstrate/DynamicLibraries
 
 include $(THEOS_MAKE_PATH)/tweak.mk

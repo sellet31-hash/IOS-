@@ -5,7 +5,11 @@ static NSString *const kDSPPrefsPathRootless = @"/var/jb/Library/Preferences/com
 static NSString *const kDSPKeyEnabled = @"enabled";
 static NSString *const kDSPKeyVendorUUID = @"vendorUUID";
 static NSString *const kDSPKeyStoredVendorUUID = @"storedVendorUUID";
+static NSString *const kDSPKeyInstallUUID = @"installUUID";
+static NSString *const kDSPKeyStoredInstallUUID = @"storedInstallUUID";
 static NSString *const kDSPKeyRegenerateVendorId = @"regenerateVendorId";
+static NSString *const kDSPKeyRegenerateFreshInstall = @"regenerateFreshInstall";
+static NSString *const kDSPKeySimulateFreshInstall = @"simulateFreshInstall";
 
 static const char kDSPProductTypeUTF8[] = "iPhone14,5";
 static const char kDSPHardwareModelUTF8[] = "D17AP";
@@ -13,7 +17,9 @@ static const char kDSPSerialUTF8[] = "F3PF534FRQ7E";
 static const char kDSPMLBUTF8[] = "F3PF534FRQ7EH7ABC";
 
 static BOOL sDSPEnabled = YES;
+static BOOL sSimulateFreshInstall = YES;
 static NSUUID *sVendorUUID = nil;
+static NSString *sInstallUUIDString = nil;
 
 static NSUUID *DSPParseUUID(NSString *value) {
     if (value.length == 0) {
@@ -27,6 +33,10 @@ static void DSPSavePlist(NSDictionary *plist) {
         return;
     }
     [plist writeToFile:kDSPPrefsPathRootless atomically:YES];
+}
+
+static NSString *DSPFreshUUIDString(void) {
+    return [[NSUUID UUID] UUIDString];
 }
 
 @implementation DSPProfile
@@ -44,27 +54,50 @@ static void DSPSavePlist(NSDictionary *plist) {
         sDSPEnabled = YES;
     }
 
-    BOOL dirty = NO;
-    if ([plist[kDSPKeyRegenerateVendorId] boolValue]) {
-        [plist removeObjectForKey:kDSPKeyRegenerateVendorId];
-        NSString *fresh = [[NSUUID UUID] UUIDString];
-        plist[kDSPKeyStoredVendorUUID] = fresh;
-        sVendorUUID = DSPParseUUID(fresh);
-        dirty = YES;
+    id simulate = plist[kDSPKeySimulateFreshInstall];
+    if ([simulate isKindOfClass:[NSNumber class]]) {
+        sSimulateFreshInstall = [(NSNumber *)simulate boolValue];
     } else {
-        NSUUID *manual = DSPParseUUID(plist[kDSPKeyVendorUUID]);
-        if (manual) {
-            sVendorUUID = manual;
+        sSimulateFreshInstall = YES;
+    }
+
+    BOOL dirty = NO;
+    BOOL regen = [plist[kDSPKeyRegenerateFreshInstall] boolValue] || [plist[kDSPKeyRegenerateVendorId] boolValue];
+    if (regen) {
+        [plist removeObjectForKey:kDSPKeyRegenerateFreshInstall];
+        [plist removeObjectForKey:kDSPKeyRegenerateVendorId];
+        plist[kDSPKeyStoredVendorUUID] = DSPFreshUUIDString();
+        plist[kDSPKeyStoredInstallUUID] = DSPFreshUUIDString();
+        dirty = YES;
+    }
+
+    NSString *manualInstall = plist[kDSPKeyInstallUUID];
+    if (manualInstall.length > 0) {
+        sInstallUUIDString = [manualInstall copy];
+    } else {
+        NSString *storedInstall = plist[kDSPKeyStoredInstallUUID];
+        if (storedInstall.length > 0) {
+            sInstallUUIDString = [storedInstall copy];
         } else {
-            NSUUID *stored = DSPParseUUID(plist[kDSPKeyStoredVendorUUID]);
-            if (stored) {
-                sVendorUUID = stored;
-            } else {
-                NSString *fresh = [[NSUUID UUID] UUIDString];
-                plist[kDSPKeyStoredVendorUUID] = fresh;
-                sVendorUUID = DSPParseUUID(fresh);
-                dirty = YES;
-            }
+            NSString *fresh = DSPFreshUUIDString();
+            plist[kDSPKeyStoredInstallUUID] = fresh;
+            sInstallUUIDString = fresh;
+            dirty = YES;
+        }
+    }
+
+    NSUUID *manualVendor = DSPParseUUID(plist[kDSPKeyVendorUUID]);
+    if (manualVendor) {
+        sVendorUUID = manualVendor;
+    } else {
+        NSString *storedVendor = plist[kDSPKeyStoredVendorUUID];
+        if (storedVendor.length > 0) {
+            sVendorUUID = DSPParseUUID(storedVendor);
+        } else {
+            NSString *fresh = DSPFreshUUIDString();
+            plist[kDSPKeyStoredVendorUUID] = fresh;
+            sVendorUUID = DSPParseUUID(fresh);
+            dirty = YES;
         }
     }
 
@@ -77,8 +110,16 @@ static void DSPSavePlist(NSDictionary *plist) {
     return sDSPEnabled;
 }
 
++ (BOOL)simulateFreshInstall {
+    return sSimulateFreshInstall;
+}
+
 + (NSUUID *)spoofedVendorIdentifier {
     return sVendorUUID;
+}
+
++ (const char *)installSessionUUIDUTF8 {
+    return sInstallUUIDString.UTF8String ?: "";
 }
 
 + (const char *)productTypeUTF8 {

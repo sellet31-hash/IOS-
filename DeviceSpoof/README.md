@@ -1,75 +1,51 @@
-# DeviceSpoof（台湾虾皮 → iPhone 13）
+# DeviceSpoof（台湾虾皮 → iPhone 13 · 免刷机注册向）
 
-多巴胺 **rootless** 越狱插件：仅在 **台湾虾皮**（`com.beeasy.shopee.tw`）进程内伪装硬件与 **IDFV**，用于配合「卸载重装虾皮」后重新注册。不改系统函数代码，不改屏幕。
+仅在 **台湾虾皮** 进程内生效。目标：在不重刷 iOS 的前提下，尽量模拟 **「刷机后首次安装虾皮」** 时客户端会上报的安装实例 ID，而不是只改序列号。
 
-固定值：
+## 1.0.9 相对刷机多做了什么
 
-| 项目 | 值 |
-|------|-----|
-| 机型 | iPhone 13（`iPhone14,5` / `D17AP`） |
-| 序列号 | `F3PF534FRQ7E` |
-| 主板号 MLB | `F3PF534FRQ7EH7ABC` |
-| IDFV | 首次注入时自动生成，写入 prefs；可手动换 |
+刷机后序列号不变仍能注册 → 上限主键多半是 **安装实例 / 客户端持久化 ID**，不是硬件字符串。
 
-## 推荐注册流程（设备上限）
+| 层级 | 1.0.9 行为 |
+|------|------------|
+| 硬件档 | iPhone 13 + 固定序列号 / MLB（与 1.0.7 相同） |
+| IDFV | `identifierForVendor` → prefs 里的 UUID |
+| **安装实例 UUID** | `MGCopyAnswer`：`InstallUUID`、`InstallationUUID`、`SystemSessionUUID`、`BootSessionUUID` → 同一套 `storedInstallUUID` |
+| **旧设备 token** | `simulateFreshInstall` 开启时，对钥匙串里名称像 device/fingerprint/install 的项 **假装不存在**，逼虾皮重新生成 |
 
-1. **卸载**台湾虾皮（清沙盒 + 钥匙串里该 App 的项）。
-2. Sileo 安装 / 更新 **DeviceSpoof 1.0.8+**，**Respring**。
-3. **重新安装**虾皮（App Store 或原方式），**不要**先登录旧号。
-4. 换 **新手机号**，尽量换 **网络/IP**，再注册。
-5. 若仍提示设备上限：在 prefs 里设 `regenerateVendorId` 为 `true`，Respring，再卸载重装虾皮试一次。
+插件 **不能** 重写整台 iOS 的数据分区，也 **不能** 伪造 Apple DeviceCheck 真 token。若 1.0.9 仍不过，需要抓注册接口再 Hook 上报 JSON（见下文）。
 
-插件**不能**解除服务端对已封禁手机号/IP 的限制；只能让虾皮进程内读到的指纹更像「另一台 13 + 新 IDFV」。
+## 免刷机注册推荐流程
 
-## 安装
-
-1. 设备已越狱（多巴胺），并安装 ElleKit / Substitute。
-2. 将 CI 产物 `com.appbackup.devicespoof_*.deb` 传到手机，用 Sileo 或 `dpkg -i` 安装。
-3. **Respring** 后安装或打开虾皮。
-
-## 配置文件
-
-`/var/jb/Library/Preferences/com.appbackup.devicespoof.plist`
+1. **卸载**台湾虾皮。
+2. 编辑 `/var/jb/Library/Preferences/com.appbackup.devicespoof.plist`：
 
 ```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>enabled</key>
-	<true/>
-	<key>regenerateVendorId</key>
-	<false/>
-</dict>
-</plist>
+<key>enabled</key><true/>
+<key>simulateFreshInstall</key><true/>
+<key>regenerateFreshInstall</key><true/>
 ```
+
+3. **Respring**（会写入新的 `storedVendorUUID` + `storedInstallUUID`，并清掉 regenerate 标志）。
+4. 确认 Sileo 里 **DeviceSpoof ≥ 1.0.9**，再 **安装虾皮**。
+5. **新手机号 + 换网络/IP** 再注册（插件改不了这两项）。
+
+每次要「换一台新设备」再注册：重复 1–5，或只设 `regenerateFreshInstall` = true 后 Respring + 卸载重装虾皮。
+
+## 配置键
 
 | 键 | 说明 |
 |----|------|
-| `enabled` | `false` 关闭伪装（需 Respring） |
-| `vendorUUID` | 可选，固定 IDFV，如 `A1B2C3D4-E5F6-7890-ABCD-EF1234567890` |
-| `storedVendorUUID` | 插件自动写入，一般不用手改 |
-| `regenerateVendorId` | 设为 `true` 后 Respring，会生成新 IDFV 并写回 plist |
+| `enabled` | 总开关 |
+| `simulateFreshInstall` | 默认 true；模拟首次安装（InstallUUID + 钥匙串读拦截） |
+| `regenerateFreshInstall` | true 一次 → 换新的 IDFV + InstallUUID |
+| `regenerateVendorId` | 同 regenerateFreshInstall（兼容旧键） |
+| `vendorUUID` / `installUUID` | 可选，手动固定 UUID |
 
-缺省 prefs 时：**开启**，并会在首次启动虾皮时 **自动生成** `storedVendorUUID`。
+## 仍失败时（第二阶段）
 
-## Hook 范围
+抓 **注册失败** 与 **刷机后成功** 各一次 HTTPS 请求体，对比 `device_id` / `install_id` / `fingerprint` 等字段名。下一版只对虾皮 **上报 JSON** 做替换，仍只在虾皮进程内、仍不刷机。
 
-- `MGCopyAnswer`：`ProductType`、`HardwareModel`、`HWModelStr`、`SerialNumber`、`MLBSerialNumber`
-- `sysctl` / `sysctlbyname` / `uname`：机型字符串（与 1.0.6 相同方式，只改虾皮进程内指针）
-- `UIDevice identifierForVendor`：返回 prefs 里的 IDFV
+## 安装
 
-不改屏幕、不改 IDFA、不改钥匙串、不改系统设置里的真序列号。
-
-## 闪退排查
-
-1. 确认 Sileo 版本 **1.0.8+**，Respring，强杀虾皮再开。
-2. 仍闪：prefs 里 `enabled` = `false` 后 Respring；或 Choicy 对虾皮禁用 DeviceSpoof。
-
-## 本地编译
-
-```bash
-make package FINALPACKAGE=1
-```
-
-产物在 `packages/*.deb`。
+Sileo 安装 deb → Respring。与 AppBackup 无关。
