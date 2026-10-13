@@ -1,13 +1,15 @@
 #import <CoreGraphics/CoreGraphics.h>
 
+@class NSUUID;
+
 /// Fixed iPhone 13 hardware profile (ProductType iPhone14,5).
 @interface DSPProfile : NSObject
 
-/// Stable C strings for use from sysctl/uname hooks (any thread).
 + (const char *)productTypeUTF8;
 + (const char *)hardwareModelUTF8;
 + (const char *)hwMachineUTF8;
 + (const char *)serialNumberUTF8;
++ (const char *)mlbSerialUTF8;
 
 + (NSString *)productType;
 + (NSString *)hardwareModel;
@@ -19,6 +21,7 @@
 + (CGRect)nativeScreenBounds;
 
 + (BOOL)isSpoofEnabled;
++ (NSUUID *)spoofedVendorIdentifier;
 + (void)reloadPreferences;
 
 @end

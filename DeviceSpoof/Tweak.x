@@ -1,4 +1,5 @@
 #import <CoreFoundation/CoreFoundation.h>
+#import <UIKit/UIKit.h>
 #import <dlfcn.h>
 #import <mach-o/dyld.h>
 #import <mach-o/loader.h>
@@ -23,9 +24,11 @@ static CFStringRef kDSPProductTypeKey;
 static CFStringRef kDSPHardwareModelKey;
 static CFStringRef kDSPHWModelStrKey;
 static CFStringRef kDSPSerialNumberKey;
+static CFStringRef kDSPMLBSerialNumberKey;
 static CFStringRef kDSPProductTypeValue;
 static CFStringRef kDSPHardwareModelValue;
 static CFStringRef kDSPSerialNumberValue;
+static CFStringRef kDSPMLBSerialNumberValue;
 static const char *kDSPMachineUTF8;
 static const char *kDSPModelUTF8;
 
@@ -47,6 +50,9 @@ static CFStringRef DSPAnswer(CFStringRef property) {
     }
     if (kDSPSerialNumberKey && CFEqual(property, kDSPSerialNumberKey)) {
         return kDSPSerialNumberValue;
+    }
+    if (kDSPMLBSerialNumberKey && CFEqual(property, kDSPMLBSerialNumberKey)) {
+        return kDSPMLBSerialNumberValue;
     }
     return NULL;
 }
@@ -232,10 +238,26 @@ static void DSPPrepareAnswers(void) {
     kDSPHardwareModelKey = CFStringCreateWithCString(NULL, "HardwareModel", kCFStringEncodingUTF8);
     kDSPHWModelStrKey = CFStringCreateWithCString(NULL, "HWModelStr", kCFStringEncodingUTF8);
     kDSPSerialNumberKey = CFStringCreateWithCString(NULL, "SerialNumber", kCFStringEncodingUTF8);
+    kDSPMLBSerialNumberKey = CFStringCreateWithCString(NULL, "MLBSerialNumber", kCFStringEncodingUTF8);
     kDSPProductTypeValue = CFStringCreateWithCString(NULL, kDSPMachineUTF8, kCFStringEncodingUTF8);
     kDSPHardwareModelValue = CFStringCreateWithCString(NULL, kDSPModelUTF8, kCFStringEncodingUTF8);
     kDSPSerialNumberValue = CFStringCreateWithCString(NULL, [DSPProfile serialNumberUTF8], kCFStringEncodingUTF8);
+    kDSPMLBSerialNumberValue = CFStringCreateWithCString(NULL, [DSPProfile mlbSerialUTF8], kCFStringEncodingUTF8);
 }
+
+%hook UIDevice
+
+- (NSUUID *)identifierForVendor {
+    if ([DSPProfile isSpoofEnabled]) {
+        NSUUID *vendor = [DSPProfile spoofedVendorIdentifier];
+        if (vendor) {
+            return vendor;
+        }
+    }
+    return %orig;
+}
+
+%end
 
 static void DSPResolveOriginals(void) {
     void *gestalt = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
