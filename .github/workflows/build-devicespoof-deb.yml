@@ -12,30 +12,33 @@ on:
 
 jobs:
   build:
-    # Ubuntu runners start immediately. macos-latest often sits in "Queued" for a long time.
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: DeviceSpoof
     steps:
       - uses: actions/checkout@v4
 
       - name: Install tools
-        run: sudo apt-get update && sudo apt-get install -y build-essential fakeroot git perl clang xz-utils curl dpkg
-
-      - name: Install Theos
         run: |
-          git clone --recursive --depth 1 https://github.com/theos/theos.git "$RUNNER_TEMP/theos"
-          echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
+          sudo apt-get update
+          sudo apt-get install -y build-essential fakeroot rsync curl perl zip git libxml2 libtinfo6 xz-utils dpkg-dev
 
-      - name: Install iOS SDK
+      - name: Install Theos and iOS toolchain
         run: |
-          mkdir -p "$THEOS/sdks"
-          curl -L --fail --retry 3 -o "$RUNNER_TEMP/iPhoneOS16.5.sdk.tar.xz" \
+          set -euo pipefail
+          export THEOS="$HOME/theos"
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
+          mkdir -p "$THEOS/toolchain" "$THEOS/sdks"
+          ARCH="$(uname -m)"
+          curl -fsSL "https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-${ARCH}.tar.xz" \
+            | tar -xJ -C "$THEOS/toolchain"
+          test -x "$THEOS/toolchain/linux/iphone/bin/clang"
+          curl -fsSL -o "$RUNNER_TEMP/iPhoneOS16.5.sdk.tar.xz" \
             https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz
-          tar -xf "$RUNNER_TEMP/iPhoneOS16.5.sdk.tar.xz" -C "$THEOS/sdks"
+          tar -xJf "$RUNNER_TEMP/iPhoneOS16.5.sdk.tar.xz" -C "$THEOS/sdks"
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+          echo "$THEOS/toolchain/linux/iphone/bin" >> "$GITHUB_PATH"
 
       - name: Build deb
+        working-directory: DeviceSpoof
         run: make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
 
       - name: Upload deb
