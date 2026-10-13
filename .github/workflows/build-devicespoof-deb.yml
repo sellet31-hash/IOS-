@@ -12,7 +12,8 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    # Ubuntu runners start immediately. macos-latest often sits in "Queued" for a long time.
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: DeviceSpoof
@@ -20,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install tools
-        run: brew install ldid xz dpkg
+        run: sudo apt-get update && sudo apt-get install -y build-essential fakeroot git perl clang xz-utils curl dpkg
 
       - name: Install Theos
         run: |
