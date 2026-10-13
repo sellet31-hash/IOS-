@@ -36,13 +36,12 @@
 - `ProductType` → `iPhone12,1`
 - `HardwareModel` / `HWModelStr` → `N104AP`
 
-不挂钩 `UIScreen`、`sysctl`、`sysctlbyname`、`uname`。这些函数被内联改写后，虾皮会在启动或使用中闪退。
+1.0.4 及更早版本会改写 `MGCopyAnswer` 函数本体，虾皮一检测到入口被改就会闪退。1.0.5 只改虾皮自己的调用指针，不改系统函数代码，也不改屏幕和 `sysctl`。
 
 ## 闪退排查
 
-1. 覆盖安装 **1.0.4**，Respring，强杀虾皮后再打开。请确认 Sileo 里版本是 1.0.4，不要留着 1.0.2。
-2. 1.0.3 及更早版本改过屏幕或 `sysctl`，容易闪退。
-3. 若 1.0.4 仍闪退：把上面的 `enabled` 设为 `false` 并 Respring。若这样就不闪，说明是机型返回值触发了虾皮自己的校验；若这样仍闪，再用 Choicy 对虾皮禁用本插件。
+1. 覆盖安装 **1.0.5**，在 Sileo 里确认版本，Respring，强杀虾皮后再打开。
+2. 若仍一打开就闪：把 `enabled` 设为 `false` 后 Respring 再试。这样还不闪，说明是改机型触发了虾皮校验；这样仍闪，说明虾皮在检测越狱插件，请用 Choicy 对 `com.beeasy.shopee.tw` 禁用 DeviceSpoof。
 
 ## 限制
 
