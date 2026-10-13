@@ -1,6 +1,6 @@
 # DeviceSpoof（台湾虾皮 → iPhone 11）
 
-多巴胺 **rootless** 越狱插件：仅在 **台湾虾皮**（`com.beeasy.shopee.tw`）进程内，把 `MGCopyAnswer` 读到的机型改成 **iPhone 11**（`iPhone12,1` / `N104AP`）。不改屏幕，不改 `sysctl`。
+多巴胺 **rootless** 越狱插件：仅在 **台湾虾皮**（`com.beeasy.shopee.tw`）进程内，把机型读数改成 **iPhone 11**（`iPhone12,1` / `N104AP`）。不改系统函数代码，也不改屏幕。
 
 与 TrollStore 的 **AppBackup** 无关，需通过 **Sileo / `.deb`** 安装。
 
@@ -31,17 +31,18 @@
 
 ## Hook 范围
 
-只挂钩 `MGCopyAnswer` 的三个字符串：
+只改虾皮进程里指向这些函数的指针，不改函数本身：
 
-- `ProductType` → `iPhone12,1`
-- `HardwareModel` / `HWModelStr` → `N104AP`
+- `sysctl` / `sysctlbyname`：`hw.machine`、`hw.product` → `iPhone12,1`，`hw.model` → `N104AP`
+- `uname` 的 `machine`
+- `dlsym("MGCopyAnswer")` 以及直接调用时的 `ProductType`、`HardwareModel`、`HWModelStr`
 
-1.0.4 及更早版本会改写 `MGCopyAnswer` 函数本体，虾皮一检测到入口被改就会闪退。1.0.5 只改虾皮自己的调用指针，不改系统函数代码，也不改屏幕和 `sysctl`。
+1.0.5 只改了 `MGCopyAnswer` 的直接调用。虾皮是用 `dlsym` 或 `sysctl` 读机型的，所以不会闪退，但伪装也不生效。
 
 ## 闪退排查
 
-1. 覆盖安装 **1.0.5**，在 Sileo 里确认版本，Respring，强杀虾皮后再打开。
-2. 若仍一打开就闪：把 `enabled` 设为 `false` 后 Respring 再试。这样还不闪，说明是改机型触发了虾皮校验；这样仍闪，说明虾皮在检测越狱插件，请用 Choicy 对 `com.beeasy.shopee.tw` 禁用 DeviceSpoof。
+1. 覆盖安装 **1.0.6**，在 Sileo 里确认版本，Respring，强杀虾皮后再打开。
+2. 若一打开就闪：把 `enabled` 设为 `false` 后 Respring。仍闪的话，用 Choicy 对 `com.beeasy.shopee.tw` 禁用 DeviceSpoof。
 
 ## 限制
 
