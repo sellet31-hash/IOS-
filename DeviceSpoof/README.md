@@ -31,16 +31,17 @@
 
 ## Hook 范围
 
-- `MGCopyAnswer`：`ProductType`、`HardwareModel` / `HWModelStr`、部分名称键
-- `sysctl` / `sysctlbyname`：`hw.machine`、`hw.model`、`hw.product`
+- `MGCopyAnswer`：`ProductType`、`HardwareModel` / `HWModelStr`、`MarketingName`
+- `sysctlbyname`：`hw.machine`、`hw.model`、`hw.product`
 - `uname`：`machine`
-- `UIScreen`：主屏 bounds / scale / nativeBounds（与 iPhone 11 一致）
+
+不改 `UIScreen`。把 iPhone X 的 375×812@3x 改成 11 的 414×896@2x 会在启动时把 UIKit 打崩。
 
 ## 闪退排查
 
-1. 确认已装 **ElleKit**（多巴胺）或 Substitute，并 respring。
-2. 若仍闪退：在 Choicy 里只对 `com.beeasy.shopee.tw` 启用 DeviceSpoof，禁用其它注入冲突项。
-3. **1.0.1** 起修复了在 `UIScreen` Hook 里调用 `mainScreen` 导致的递归闪退；请用最新 deb 覆盖安装。
+1. 覆盖安装 **1.0.3** 或更新版本，然后 respring，再强杀虾皮。
+2. 1.0.2 及更早版本会 Hook 屏幕尺寸和 `sysctl`，打开虾皮会闪退。
+3. 若仍闪退：在 Choicy 里只对 `com.beeasy.shopee.tw` 启用 DeviceSpoof。
 
 ## 限制
 

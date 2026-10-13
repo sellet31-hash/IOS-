@@ -1,4 +1,3 @@
-#import <UIKit/UIKit.h>
 #import <substrate.h>
 #import <dlfcn.h>
 #import <sys/sysctl.h>
@@ -7,16 +6,9 @@
 #import "DSPProfile.h"
 
 static CFTypeRef (*orig_MGCopyAnswer)(CFStringRef property);
-
-/// Cached in +mainScreen; never call mainScreen from hooked -bounds/-scale (infinite recursion).
-static UIScreen *gDSPMainScreen = nil;
-
-static BOOL DSPShouldSpoofScreen(UIScreen *screen) {
-    if (!screen || ![DSPProfile isSpoofEnabled]) {
-        return NO;
-    }
-    return gDSPMainScreen != nil && screen == gDSPMainScreen;
-}
+static int (*orig_sysctlbyname)(const char *, void *, size_t *, void *, size_t);
+static int (*orig_uname)(struct utsname *);
+static __thread int gDSPSysctlDepth;
 
 static BOOL DSPApplyStringAnswer(CFStringRef question, const char **keys, CFStringRef fake, CFTypeRef *out) {
     if (!question || !fake) {
@@ -40,31 +32,31 @@ static BOOL DSPApplyStringAnswer(CFStringRef question, const char **keys, CFStri
 }
 
 static CFTypeRef DSP_MGCopyAnswer(CFStringRef property) {
-    if (![DSPProfile isSpoofEnabled]) {
-        return orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL;
+    if (!orig_MGCopyAnswer) {
+        return NULL;
+    }
+    if (!property || ![DSPProfile isSpoofEnabled]) {
+        return orig_MGCopyAnswer(property);
     }
 
     CFStringRef product = (__bridge CFStringRef)[DSPProfile productType];
     CFStringRef hwModel = (__bridge CFStringRef)[DSPProfile hardwareModel];
     CFStringRef name = (__bridge CFStringRef)[DSPProfile marketingName];
+    CFTypeRef spoof = NULL;
 
     const char *productKeys[] = {"ProductType", NULL};
-    CFTypeRef spoof = NULL;
     if (DSPApplyStringAnswer(property, productKeys, product, &spoof)) {
         return spoof;
     }
-
     const char *hwKeys[] = {"HardwareModel", "HWModelStr", NULL};
     if (DSPApplyStringAnswer(property, hwKeys, hwModel, &spoof)) {
         return spoof;
     }
-
     const char *nameKeys[] = {"MarketingName", NULL};
     if (DSPApplyStringAnswer(property, nameKeys, name, &spoof)) {
         return spoof;
     }
-
-    return orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL;
+    return orig_MGCopyAnswer(property);
 }
 
 static void DSPReplaceCStringBuffer(void *oldp, size_t *oldlenp, const char *value) {
@@ -78,113 +70,53 @@ static void DSPReplaceCStringBuffer(void *oldp, size_t *oldlenp, const char *val
     }
 }
 
-static int (*orig_sysctlbyname)(const char *, void *, size_t *, void *, size_t);
-
 static int DSP_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
-    int ret = orig_sysctlbyname ? orig_sysctlbyname(name, oldp, oldlenp, newp, newlen) : -1;
-    if (ret != 0 || ![DSPProfile isSpoofEnabled] || !name || !oldp || !oldlenp) {
-        return ret;
+    if (!orig_sysctlbyname) {
+        return -1;
     }
-    if (strcmp(name, "hw.machine") == 0) {
-        DSPReplaceCStringBuffer(oldp, oldlenp, [DSPProfile hwMachineUTF8]);
-    } else if (strcmp(name, "hw.model") == 0) {
-        DSPReplaceCStringBuffer(oldp, oldlenp, [DSPProfile hardwareModelUTF8]);
-    } else if (strcmp(name, "hw.product") == 0) {
-        DSPReplaceCStringBuffer(oldp, oldlenp, [DSPProfile productTypeUTF8]);
+    if (gDSPSysctlDepth > 0) {
+        return orig_sysctlbyname(name, oldp, oldlenp, newp, newlen);
     }
-    return ret;
-}
-
-static int (*orig_sysctl)(int *, u_int, void *, size_t *, void *, size_t);
-
-static int DSP_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
-    int ret = orig_sysctl ? orig_sysctl(name, namelen, oldp, oldlenp, newp, newlen) : -1;
-    if (ret != 0 || ![DSPProfile isSpoofEnabled] || !name || namelen < 2 || !oldp || !oldlenp) {
-        return ret;
-    }
-    if (name[0] == CTL_HW) {
-        if (name[1] == HW_MACHINE) {
+    gDSPSysctlDepth++;
+    int ret = orig_sysctlbyname(name, oldp, oldlenp, newp, newlen);
+    if (ret == 0 && [DSPProfile isSpoofEnabled] && name && oldp && oldlenp) {
+        if (strcmp(name, "hw.machine") == 0) {
             DSPReplaceCStringBuffer(oldp, oldlenp, [DSPProfile hwMachineUTF8]);
-        } else if (name[1] == HW_MODEL) {
+        } else if (strcmp(name, "hw.model") == 0) {
             DSPReplaceCStringBuffer(oldp, oldlenp, [DSPProfile hardwareModelUTF8]);
+        } else if (strcmp(name, "hw.product") == 0) {
+            DSPReplaceCStringBuffer(oldp, oldlenp, [DSPProfile productTypeUTF8]);
         }
     }
+    gDSPSysctlDepth--;
     return ret;
 }
 
-static int (*orig_uname)(struct utsname *);
-
 static int DSP_uname(struct utsname *buf) {
-    int ret = orig_uname ? orig_uname(buf) : -1;
+    if (!orig_uname) {
+        return -1;
+    }
+    int ret = orig_uname(buf);
     if (ret == 0 && buf && [DSPProfile isSpoofEnabled]) {
         strlcpy(buf->machine, [DSPProfile hwMachineUTF8], sizeof(buf->machine));
     }
     return ret;
 }
 
-%hook UIScreen
-
-+ (UIScreen *)mainScreen {
-    UIScreen *screen = %orig;
-    if (screen && !gDSPMainScreen) {
-        gDSPMainScreen = screen;
-    }
-    return screen;
-}
-
-- (CGRect)bounds {
-    if (DSPShouldSpoofScreen(self)) {
-        return [DSPProfile screenBounds];
-    }
-    return %orig;
-}
-
-- (CGFloat)scale {
-    if (DSPShouldSpoofScreen(self)) {
-        return [DSPProfile screenScale];
-    }
-    return %orig;
-}
-
-- (CGFloat)nativeScale {
-    if (DSPShouldSpoofScreen(self)) {
-        return [DSPProfile screenScale];
-    }
-    return %orig;
-}
-
-- (CGRect)nativeBounds {
-    if (DSPShouldSpoofScreen(self)) {
-        return [DSPProfile nativeScreenBounds];
-    }
-    return %orig;
-}
-
-%end
-
 static void DSPInstallHooks(void) {
-    if (!orig_MGCopyAnswer) {
-        void *gestalt = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
-        if (!gestalt) {
-            gestalt = dlopen("/System/Library/Frameworks/MobileGestalt.framework/MobileGestalt", RTLD_LAZY);
-        }
-        if (gestalt) {
-            void *sym = dlsym(gestalt, "MGCopyAnswer");
-            if (sym) {
-                MSHookFunction(sym, (void *)DSP_MGCopyAnswer, (void **)&orig_MGCopyAnswer);
-            }
+    void *gestalt = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
+    if (!gestalt) {
+        gestalt = dlopen("/System/Library/Frameworks/MobileGestalt.framework/MobileGestalt", RTLD_LAZY);
+    }
+    if (gestalt) {
+        void *sym = dlsym(gestalt, "MGCopyAnswer");
+        if (sym) {
+            MSHookFunction(sym, (void *)DSP_MGCopyAnswer, (void **)&orig_MGCopyAnswer);
         }
     }
 
-    if (!orig_sysctlbyname) {
-        MSHookFunction((void *)sysctlbyname, (void *)DSP_sysctlbyname, (void **)&orig_sysctlbyname);
-    }
-    if (!orig_sysctl) {
-        MSHookFunction((void *)sysctl, (void *)DSP_sysctl, (void **)&orig_sysctl);
-    }
-    if (!orig_uname) {
-        MSHookFunction((void *)uname, (void *)DSP_uname, (void **)&orig_uname);
-    }
+    MSHookFunction((void *)sysctlbyname, (void *)DSP_sysctlbyname, (void **)&orig_sysctlbyname);
+    MSHookFunction((void *)uname, (void *)DSP_uname, (void **)&orig_uname);
 }
 
 %ctor {
