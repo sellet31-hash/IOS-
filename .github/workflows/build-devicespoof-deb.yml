@@ -20,14 +20,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential fakeroot rsync curl perl zip git libxml2 libtinfo6 xz-utils dpkg-dev libplist-utils
-# Theos plistutil is linked against libplist-2.0.so.4
-sudo apt-get install -y libplist-2.0-4 || true
-ldconfig -p | grep libplist || true
-if ! ldconfig -p | grep -q 'libplist-2.0.so.4'; then
-  echo "libplist-2.0.so.4 is still missing"
-  apt-cache search libplist
-  exit 1
-fi
+          # Theos plistutil is linked against libplist-2.0.so.4
+          sudo apt-get install -y libplist-2.0-4 || true
+          ldconfig -p | grep libplist || true
+          if ! ldconfig -p | grep -q 'libplist-2.0.so.4'; then
+            echo "libplist-2.0.so.4 is still missing"
+            apt-cache search libplist
+            exit 1
+          fi
 
       - name: Install Theos and iOS toolchain
         run: |
