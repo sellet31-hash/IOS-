@@ -60,6 +60,6 @@ python tests/verify_tar.py test-out/sample.tar
 
 ## DeviceSpoof（越狱插件）
 
-若设备已用 **多巴胺** 等 rootless 越狱，并希望在 **台湾虾皮**（`com.beeasy.shopee.tw`）内将硬件信息固定伪装为 **iPhone 11**，见目录 [`DeviceSpoof/README.md`](DeviceSpoof/README.md)。
+若设备已用 **多巴胺** 等 rootless 越狱，并希望在 **台湾虾皮**（`com.beeasy.shopee.tw`）内将硬件信息固定伪装为 **iPhone 13**，见目录 [`DeviceSpoof/README.md`](DeviceSpoof/README.md)。
 
 GitHub Actions 工作流 **Build DeviceSpoof deb** 会产出 `.deb`，用 Sileo 安装。与 TrollStore 的 AppBackup 分开安装即可。

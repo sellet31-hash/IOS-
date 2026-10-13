@@ -22,8 +22,10 @@ static void *(*orig_dlsym)(void *, const char *);
 static CFStringRef kDSPProductTypeKey;
 static CFStringRef kDSPHardwareModelKey;
 static CFStringRef kDSPHWModelStrKey;
+static CFStringRef kDSPSerialNumberKey;
 static CFStringRef kDSPProductTypeValue;
 static CFStringRef kDSPHardwareModelValue;
+static CFStringRef kDSPSerialNumberValue;
 static const char *kDSPMachineUTF8;
 static const char *kDSPModelUTF8;
 
@@ -42,6 +44,9 @@ static CFStringRef DSPAnswer(CFStringRef property) {
     if ((kDSPHardwareModelKey && CFEqual(property, kDSPHardwareModelKey)) ||
         (kDSPHWModelStrKey && CFEqual(property, kDSPHWModelStrKey))) {
         return kDSPHardwareModelValue;
+    }
+    if (kDSPSerialNumberKey && CFEqual(property, kDSPSerialNumberKey)) {
+        return kDSPSerialNumberValue;
     }
     return NULL;
 }
@@ -226,8 +231,10 @@ static void DSPPrepareAnswers(void) {
     kDSPProductTypeKey = CFStringCreateWithCString(NULL, "ProductType", kCFStringEncodingUTF8);
     kDSPHardwareModelKey = CFStringCreateWithCString(NULL, "HardwareModel", kCFStringEncodingUTF8);
     kDSPHWModelStrKey = CFStringCreateWithCString(NULL, "HWModelStr", kCFStringEncodingUTF8);
+    kDSPSerialNumberKey = CFStringCreateWithCString(NULL, "SerialNumber", kCFStringEncodingUTF8);
     kDSPProductTypeValue = CFStringCreateWithCString(NULL, kDSPMachineUTF8, kCFStringEncodingUTF8);
     kDSPHardwareModelValue = CFStringCreateWithCString(NULL, kDSPModelUTF8, kCFStringEncodingUTF8);
+    kDSPSerialNumberValue = CFStringCreateWithCString(NULL, [DSPProfile serialNumberUTF8], kCFStringEncodingUTF8);
 }
 
 static void DSPResolveOriginals(void) {

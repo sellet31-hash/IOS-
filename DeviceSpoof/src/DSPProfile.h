@@ -1,12 +1,13 @@
 #import <CoreGraphics/CoreGraphics.h>
 
-/// Fixed iPhone 11 hardware profile (ProductType iPhone12,1).
+/// Fixed iPhone 13 hardware profile (ProductType iPhone14,5).
 @interface DSPProfile : NSObject
 
 /// Stable C strings for use from sysctl/uname hooks (any thread).
 + (const char *)productTypeUTF8;
 + (const char *)hardwareModelUTF8;
 + (const char *)hwMachineUTF8;
++ (const char *)serialNumberUTF8;
 
 + (NSString *)productType;
 + (NSString *)hardwareModel;

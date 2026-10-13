@@ -1,6 +1,7 @@
 .theos/
 packages/
 test-out/
+代码备份/
 .DS_Store
 *.ipa
 *.deb

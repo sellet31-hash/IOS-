@@ -3,8 +3,9 @@
 
 static NSString *const kDSPPrefsPathRootless = @"/var/jb/Library/Preferences/com.appbackup.devicespoof.plist";
 
-static const char kDSPProductTypeUTF8[] = "iPhone12,1";
-static const char kDSPHardwareModelUTF8[] = "N104AP";
+static const char kDSPProductTypeUTF8[] = "iPhone14,5";
+static const char kDSPHardwareModelUTF8[] = "D17AP";
+static const char kDSPSerialUTF8[] = "F3PF534FRQ7E";
 
 static BOOL sDSPEnabled = YES;
 
@@ -40,32 +41,36 @@ static BOOL sDSPEnabled = YES;
     return kDSPProductTypeUTF8;
 }
 
++ (const char *)serialNumberUTF8 {
+    return kDSPSerialUTF8;
+}
+
 + (NSString *)productType {
-    return @"iPhone12,1";
+    return @"iPhone14,5";
 }
 
 + (NSString *)hardwareModel {
-    return @"N104AP";
+    return @"D17AP";
 }
 
 + (NSString *)hwMachine {
-    return @"iPhone12,1";
+    return @"iPhone14,5";
 }
 
 + (NSString *)marketingName {
-    return @"iPhone 11";
+    return @"iPhone 13";
 }
 
 + (CGRect)screenBounds {
-    return CGRectMake(0, 0, 414, 896);
+    return CGRectMake(0, 0, 390, 844);
 }
 
 + (CGFloat)screenScale {
-    return 2.0;
+    return 3.0;
 }
 
 + (CGRect)nativeScreenBounds {
-    return CGRectMake(0, 0, 828, 1792);
+    return CGRectMake(0, 0, 1170, 2532);
 }
 
 @end

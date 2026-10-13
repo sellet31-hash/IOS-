@@ -1,8 +1,8 @@
 Package: com.appbackup.devicespoof
-Name: DeviceSpoof (Shopee TW → iPhone 11)
-Version: 1.0.6
+Name: DeviceSpoof (Shopee TW → iPhone 13)
+Version: 1.0.7
 Architecture: iphoneos-arm64
-Description: Spoofs hardware profile as iPhone 11 inside Taiwan Shopee (com.beeasy.shopee.tw). Dopamine rootless.
+Description: Spoofs Taiwan Shopee as iPhone 13 (iPhone14,5) with a fixed serial. Dopamine rootless.
 Maintainer: AppBackup
 Author: AppBackup
 Section: Tweaks
