@@ -14,4 +14,4 @@ DeviceSpoof_INSTALL_PATH := /Library/MobileSubstrate/DynamicLibraries
 include $(THEOS_MAKE_PATH)/tweak.mk
 
 before-package::
-	bash ./copy-tweakinject.sh
+	bash ./copy-tweakinject.sh "$(THEOS_STAGING_DIR)"

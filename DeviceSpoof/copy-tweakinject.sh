@@ -1,6 +1,10 @@
 #!/bin/bash
 set -eu
-root="${THEOS_STAGING_DIR}"
+root="${1:-${THEOS_STAGING_DIR:-}}"
+if [ -z "$root" ] || [ ! -d "$root" ]; then
+  echo "THEOS_STAGING_DIR was not passed to copy-tweakinject.sh"
+  exit 1
+fi
 libdir="$root/Library/MobileSubstrate/DynamicLibraries"
 inject="$root/usr/lib/TweakInject"
 if [ ! -f "$libdir/DeviceSpoof.dylib" ]; then

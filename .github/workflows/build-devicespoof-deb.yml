@@ -47,7 +47,17 @@ jobs:
 
       - name: Build deb
         working-directory: DeviceSpoof
-        run: make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+        run: |
+          set +e
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless > "$RUNNER_TEMP/devicespoof-build.log" 2>&1
+          code=$?
+          cat "$RUNNER_TEMP/devicespoof-build.log"
+          if [ "$code" -ne 0 ]; then
+            tail -n 25 "$RUNNER_TEMP/devicespoof-build.log" | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            exit "$code"
+          fi
 
       - name: Upload deb
         uses: actions/upload-artifact@v4

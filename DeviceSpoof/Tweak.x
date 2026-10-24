@@ -25,8 +25,7 @@ typedef struct {
 
 static void DSPPrepareAnswers(void);
 static void DSPResolveOriginals(void);
-
-extern CFTypeRef MGCopyAnswer(CFStringRef property);
+static void DSPInstallInlineHooks(void);
 
 static CFTypeRef (*orig_MGCopyAnswer)(CFStringRef);
 static int (*orig_sysctlbyname)(const char *, void *, size_t *, void *, size_t);
@@ -61,7 +60,7 @@ static BOOL gDSPAnswersReady = NO;
 
 static void DSPWriteLoadMarker(void) {
     NSDictionary *info = @{
-        @"version" : @"1.2.8",
+        @"version" : @"1.2.9",
         @"bundle" : [[NSBundle mainBundle] bundleIdentifier] ?: @"",
         @"productType" : [DSPProfile productType],
         @"marketingName" : [DSPProfile marketingName],
@@ -521,66 +520,37 @@ static void DSPPrepareAnswers(void) {
 
 %end
 
-%hookf(CFTypeRef, MGCopyAnswer, CFStringRef property) {
-    DSPEnsureReady();
-    if (![DSPProfile isSpoofEnabled]) {
-        return %orig(property);
+static void DSPInstallInlineHooks(void) {
+    const char *names[] = {
+        "MGCopyAnswer", "sysctlbyname", "sysctl", "uname", "SecItemCopyMatching"
+    };
+    void *replacements[] = {
+        (void *)DSP_MGCopyAnswer, (void *)DSP_sysctlbyname, (void *)DSP_sysctl,
+        (void *)DSP_uname, (void *)DSP_SecItemCopyMatching
+    };
+    void **originals[] = {
+        (void **)&orig_MGCopyAnswer, (void **)&orig_sysctlbyname, (void **)&orig_sysctl,
+        (void **)&orig_uname, (void **)&orig_SecItemCopyMatching
+    };
+    void *symbols[5] = {0};
+    for (unsigned int index = 0; index < 5; index++) {
+        symbols[index] = dlsym(RTLD_DEFAULT, names[index]);
     }
-    CFStringRef answer = DSPAnswer(property);
-    if (answer) {
-        return CFRetain(answer);
-    }
-    return %orig(property);
-}
-
-%hookf(int, sysctlbyname, const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
-    DSPEnsureReady();
-    int result = %orig(name, oldp, oldlenp, newp, newlen);
-    if (![DSPProfile isSpoofEnabled] || result != 0 || !name || !oldp || !oldlenp) {
-        return result;
-    }
-    if (strcmp(name, "hw.machine") == 0 || strcmp(name, "hw.product") == 0) {
-        DSPReplaceCString(oldp, oldlenp, kDSPMachineUTF8);
-    } else if (strcmp(name, "hw.model") == 0) {
-        DSPReplaceCString(oldp, oldlenp, kDSPModelUTF8);
-    } else if (kDSPIOSVersionUTF8 && (strcmp(name, "kern.osproductversion") == 0 || strcmp(name, "kern.osversion") == 0)) {
-        DSPReplaceCString(oldp, oldlenp, kDSPIOSVersionUTF8);
-    }
-    return result;
-}
-
-%hookf(int, sysctl, int *name, unsigned int namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
-    DSPEnsureReady();
-    int result = %orig(name, namelen, oldp, oldlenp, newp, newlen);
-    if (![DSPProfile isSpoofEnabled] || result != 0 || !name || namelen < 2 || !oldp || !oldlenp || name[0] != CTL_HW) {
-        return result;
-    }
-    if (name[1] == HW_MACHINE) {
-        DSPReplaceCString(oldp, oldlenp, kDSPMachineUTF8);
-    } else if (name[1] == HW_MODEL) {
-        DSPReplaceCString(oldp, oldlenp, kDSPModelUTF8);
-    }
-    return result;
-}
-
-%hookf(int, uname, struct utsname *buffer) {
-    DSPEnsureReady();
-    int result = %orig(buffer);
-    if ([DSPProfile isSpoofEnabled] && result == 0 && buffer && kDSPMachineUTF8) {
-        strlcpy(buffer->machine, kDSPMachineUTF8, sizeof(buffer->machine));
-    }
-    return result;
-}
-
-%hookf(OSStatus, SecItemCopyMatching, CFDictionaryRef query, CFTypeRef *result) {
-    DSPEnsureReady();
-    if ([DSPProfile isSpoofEnabled] && DSPQueryIsPersistedDeviceSecret(query)) {
-        if (result) {
-            *result = NULL;
+    if (!symbols[0]) {
+        void *gestalt = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
+        if (!gestalt) {
+            gestalt = dlopen("/System/Library/Frameworks/MobileGestalt.framework/MobileGestalt", RTLD_LAZY);
         }
-        return errSecItemNotFound;
+        if (gestalt) {
+            symbols[0] = dlsym(gestalt, "MGCopyAnswer");
+        }
     }
-    return %orig(query, result);
+    for (unsigned int index = 0; index < 5; index++) {
+        if (!symbols[index]) {
+            continue;
+        }
+        MSHookFunction(symbols[index], replacements[index], originals[index]);
+    }
 }
 
 static void *DSPResolveOriginalSymbol(const char *name) {
@@ -619,6 +589,7 @@ static void DSPResolveOriginals(void) {
     if ([DSPProfile isSpoofEnabled]) {
         DSPRebindLoadedImages();
         _dyld_register_func_for_add_image(DSPDyldImageAdded);
+        DSPInstallInlineHooks();
     }
     DSPWriteLoadMarker();
     installed = YES;

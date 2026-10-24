@@ -1,6 +1,6 @@
 Package: com.appbackup.devicespoof
 Name: DeviceSpoof (Shopee TW iPhone 17 iOS 26)
-Version: 1.2.8
+Version: 1.2.9
 Architecture: iphoneos-arm64
 Description: Spoofs Taiwan Shopee as iPhone 17 (iPhone18,3) on iOS 26.0; rotates 32-hex deviceId plus IDFV/InstallUUID/keychain. Dopamine rootless.
 Maintainer: AppBackup
