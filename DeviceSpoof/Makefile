@@ -13,7 +13,20 @@ DeviceSpoof_INSTALL_PATH := /Library/MobileSubstrate/DynamicLibraries
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
+# stage finishes before before-package. Rootless moves files under /var/jb only
+# inside internal-package, so the dylib is still at staging/Library/... here.
 before-package::
-	$(ECHO_NOTHING)mkdir -p $(THEOS_STAGING_DIR)/var/jb/usr/lib/TweakInject$(ECHO_END)
-	$(ECHO_NOTHING)cp $(THEOS_STAGING_DIR)/var/jb/Library/MobileSubstrate/DynamicLibraries/DeviceSpoof.dylib $(THEOS_STAGING_DIR)/var/jb/usr/lib/TweakInject/$(ECHO_END)
-	$(ECHO_NOTHING)cp $(THEOS_STAGING_DIR)/var/jb/Library/MobileSubstrate/DynamicLibraries/DeviceSpoof.plist $(THEOS_STAGING_DIR)/var/jb/usr/lib/TweakInject/$(ECHO_END)
+	@set -e; \
+	libdir="$(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries"; \
+	inject="$(THEOS_STAGING_DIR)/usr/lib/TweakInject"; \
+	if [ ! -f "$$libdir/DeviceSpoof.dylib" ]; then \
+	  libdir="$(THEOS_STAGING_DIR)/var/jb/Library/MobileSubstrate/DynamicLibraries"; \
+	  inject="$(THEOS_STAGING_DIR)/var/jb/usr/lib/TweakInject"; \
+	fi; \
+	if [ ! -f "$$libdir/DeviceSpoof.dylib" ]; then \
+	  echo "DeviceSpoof dylib missing from staging:"; \
+	  find "$(THEOS_STAGING_DIR)" -name 'DeviceSpoof.*' -print; \
+	  exit 1; \
+	fi; \
+	mkdir -p "$$inject"; \
+	cp "$$libdir/DeviceSpoof.dylib" "$$libdir/DeviceSpoof.plist" "$$inject/"
