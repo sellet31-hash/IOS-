@@ -63,7 +63,14 @@ static NSArray<NSString *> *DSPOSVersionKeys(void) {
     if ([node isKindOfClass:[NSDictionary class]]) {
         NSMutableDictionary *out = [NSMutableDictionary dictionaryWithCapacity:[(NSDictionary *)node count]];
         [(NSDictionary *)node enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) {
-            NSString *keyString = [key isKindOfClass:[NSString class]] ? (NSString *)key : key.description;
+            NSString *keyString = nil;
+            if ([key isKindOfClass:[NSString class]]) {
+                keyString = (NSString *)key;
+            } else if ([key respondsToSelector:@selector(description)]) {
+                keyString = [(id)key description];
+            } else {
+                keyString = [NSString stringWithFormat:@"%@", key];
+            }
             id child = [self rewriteNode:obj depth:depth + 1];
             if ([self isDeviceFingerprintKey:keyString]) {
                 out[key] = [self deviceFingerprintHex];
