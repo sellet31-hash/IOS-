@@ -8,11 +8,8 @@
 		<array>
 			<string>com.beeasy.shopee.tw</string>
 		</array>
-		<key>Executables</key>
-		<array>
-			<string>ShopeeTW</string>
-			<string>beeasy.shopee.tw</string>
-		</array>
+		<key>Mode</key>
+		<string>Any</string>
 	</dict>
 </dict>
 </plist>

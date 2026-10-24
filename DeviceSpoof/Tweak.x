@@ -51,14 +51,27 @@ static BOOL gDSPAnswersReady = NO;
 
 static void DSPWriteLoadMarker(void) {
     NSDictionary *info = @{
-        @"version" : @"1.2.4",
+        @"version" : @"1.2.5",
         @"bundle" : [[NSBundle mainBundle] bundleIdentifier] ?: @"",
         @"productType" : [DSPProfile productType],
         @"marketingName" : [DSPProfile marketingName],
         @"enabled" : @([DSPProfile isSpoofEnabled]),
         @"loadedAt" : @((NSInteger)[[NSDate date] timeIntervalSince1970]),
+        @"markerHint" : @"Check this app's Library/Caches/ in Filza (sandbox), or /var/jb/tmp/",
     };
-    [info writeToFile:@"/var/mobile/Library/Caches/com.appbackup.devicespoof.lastload.plist" atomically:YES];
+    NSData *data = [NSPropertyListSerialization dataWithPropertyList:info
+                                                            format:NSPropertyListXMLFormat_v1_0
+                                                           options:0
+                                                             error:nil];
+    if (!data) {
+        return;
+    }
+    NSString *fileName = @"com.appbackup.devicespoof.lastload.plist";
+    NSString *sandboxCaches = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
+    if (sandboxCaches.length) {
+        [data writeToFile:[sandboxCaches stringByAppendingPathComponent:fileName] atomically:YES];
+    }
+    [data writeToFile:[@"/var/jb/tmp" stringByAppendingPathComponent:fileName] atomically:YES];
 }
 
 static void DSPEnsureReady(void) {

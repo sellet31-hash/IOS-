@@ -2,10 +2,15 @@
 
 仅在 **台湾虾皮** 进程内生效。目标：在不重刷 iOS 的前提下，尽量模拟 **「刷机后首次安装虾皮」** 时客户端会上报的安装实例 ID，而不是只改序列号。
 
+## 1.2.5
+
+- **Filter 恢复仅 `Bundles`**（1.2.3 误加 `Executables` 会导致 ElleKit **整包不注入**）  
+- 安装后 **postinst** 同步到 `/var/jb/usr/lib/TweakInject`（多巴胺常见路径）  
+- 自检文件在 **虾皮沙盒** `Library/Caches/com.appbackup.devicespoof.lastload.plist`，或 `/var/jb/tmp/` 同名  
+
 ## 1.2.4
 
-- **ElleKit `%hookf`**：全局 Hook `MGCopyAnswer` / `sysctl` / `uname`（新版虾皮 chained fixups 下 GOT rebind 常失效）  
-- 注入自检：打开虾皮后查看 `/var/mobile/Library/Caches/com.appbackup.devicespoof.lastload.plist`  
+- **ElleKit `%hookf`**：全局 Hook `MGCopyAnswer` / `sysctl` / `uname`  
 - JSON 补充 `device_name` 等 → `Apple iPhone 17`  
 
 ## 1.2.3
@@ -17,6 +22,27 @@
 **账号安全 → 装置管理** 显示的是**上次登录时服务器记录的机型**；装 1.2.4 后需 **退出账号 → 卸载重装虾皮 → 再登录**，列表才会更新，不会改历史那条「iPhone 12」。
 
 **伪装只在台湾虾皮 App 内生效**，系统「设置 → 关于本机」仍是真机。
+
+### 确认插件已注入（Filza）
+
+1. 打开虾皮一次后，在 Filza 搜 **`com.appbackup.devicespoof.lastload.plist`**  
+2. 常见位置：**虾皮数据容器** → `Library/Caches/`（不是系统根目录的 Caches）  
+3. 或 **`/var/jb/tmp/com.appbackup.devicespoof.lastload.plist`**  
+4. 若两处都没有：看下方「多巴胺 tweak 目录」  
+
+### 多巴胺 tweak 目录（NewTerm）
+
+```bash
+ls /var/jb/Library/MobileSubstrate/DynamicLibraries/DeviceSpoof.*
+ls /var/jb/usr/lib/TweakInject/DeviceSpoof.*
+```
+
+若只有前者没有后者，执行（ElleKit 官方 workaround）：
+
+```bash
+cp /var/jb/Library/MobileSubstrate/DynamicLibraries/DeviceSpoof.* /var/jb/usr/lib/TweakInject/
+killall -9 com.beeasy.shopee.tw
+```
 
 ## 1.2.0
 
