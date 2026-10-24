@@ -1,3 +1,4 @@
+#import <Foundation/Foundation.h>
 #import <CoreFoundation/CoreFoundation.h>
 #import <Security/Security.h>
 #import <UIKit/UIKit.h>
@@ -388,12 +389,12 @@ static void DSPPrepareAnswers(void) {
 
 %hook NSJSONSerialization
 
-+ (NSData *)dataWithJSONObject:(id)obj options:(NSJSONWritingOptions)opt error:(NSError **)error {
++ (NSData *)dataWithJSONObject:(id)obj options:(NSUInteger)opt error:(NSError **)error {
     if ([DSPProfile isSpoofEnabled] && obj) {
         id rewritten = [DSPShopeeReport rewritePayloadIfNeeded:obj];
         return %orig(rewritten, opt, error);
     }
-    return %orig;
+    return %orig(obj, opt, error);
 }
 
 %end
