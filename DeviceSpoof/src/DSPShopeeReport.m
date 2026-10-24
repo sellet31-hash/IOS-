@@ -6,7 +6,17 @@ static NSArray<NSString *> *DSPFingerprintKeys(void) {
 }
 
 static NSArray<NSString *> *DSPModelKeys(void) {
-    return @[ @"device_model", @"devicemodel", @"devices" ];
+    return @[
+        @"device_model", @"devicemodel", @"devices", @"machine", @"hardware_model",
+        @"phone_model", @"model", @"platform_model", @"hw_machine", @"product_type"
+    ];
+}
+
+static NSArray<NSString *> *DSPMarketingNameKeys(void) {
+    return @[
+        @"device_name", @"devicename", @"model_name", @"phone_name", @"device_model_name",
+        @"display_model", @"client_model"
+    ];
 }
 
 static NSArray<NSString *> *DSPOSVersionKeys(void) {
@@ -35,6 +45,27 @@ static NSArray<NSString *> *DSPOSVersionKeys(void) {
         return NO;
     }
     return [DSPModelKeys() containsObject:key.lowercaseString];
+}
+
++ (BOOL)isMarketingNameKey:(NSString *)key {
+    if (key.length == 0) {
+        return NO;
+    }
+    return [DSPMarketingNameKeys() containsObject:key.lowercaseString];
+}
+
++ (NSString *)marketingNameForReports {
+    return [NSString stringWithFormat:@"Apple %@", [DSPProfile marketingName]];
+}
+
++ (NSString *)rewriteModelStringIfNeeded:(NSString *)value {
+    if (value.length == 0) {
+        return value;
+    }
+    if ([value hasPrefix:@"iPhone"] || [value containsString:@"iPhone"]) {
+        return [self productTypeForReports];
+    }
+    return value;
 }
 
 + (BOOL)isOSVersionKey:(NSString *)key {
@@ -74,9 +105,15 @@ static NSArray<NSString *> *DSPOSVersionKeys(void) {
             id child = [self rewriteNode:obj depth:depth + 1];
             if ([self isDeviceFingerprintKey:keyString]) {
                 out[key] = [self deviceFingerprintHex];
+            } else if ([self isMarketingNameKey:keyString]) {
+                if ([child isKindOfClass:[NSString class]] && [(NSString *)child containsString:@"iPhone"]) {
+                    out[key] = [self marketingNameForReports];
+                } else {
+                    out[key] = child;
+                }
             } else if ([self isDeviceModelKey:keyString]) {
-                if ([child isKindOfClass:[NSString class]] && [(NSString *)child hasPrefix:@"iPhone"]) {
-                    out[key] = [self productTypeForReports];
+                if ([child isKindOfClass:[NSString class]]) {
+                    out[key] = [self rewriteModelStringIfNeeded:(NSString *)child];
                 } else {
                     out[key] = child;
                 }

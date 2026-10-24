@@ -10,6 +10,8 @@
 + (BOOL)isDeviceFingerprintKey:(NSString *)key;
 + (BOOL)isDeviceModelKey:(NSString *)key;
 + (BOOL)isOSVersionKey:(NSString *)key;
++ (BOOL)isMarketingNameKey:(NSString *)key;
++ (NSString *)marketingNameForReports;
 
 /// 深拷贝并改写上报 JSON 里的设备字段（仅字段名匹配，不碰 token/phone）。
 + (id)rewritePayloadIfNeeded:(id)object;

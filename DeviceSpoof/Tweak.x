@@ -2,6 +2,7 @@
 #import <CoreFoundation/CoreFoundation.h>
 #import <Security/Security.h>
 #import <UIKit/UIKit.h>
+#import <substrate.h>
 #import <dlfcn.h>
 #import <mach-o/dyld.h>
 #import <mach-o/loader.h>
@@ -46,11 +47,41 @@ static const char *kDSPModelUTF8;
 static const char *kDSPIOSVersionUTF8;
 static unsigned int gDSPBindCount = 0;
 static DSPBind gDSPBinds[6];
+static BOOL gDSPAnswersReady = NO;
+
+static void DSPWriteLoadMarker(void) {
+    NSDictionary *info = @{
+        @"version" : @"1.2.4",
+        @"bundle" : [[NSBundle mainBundle] bundleIdentifier] ?: @"",
+        @"productType" : [DSPProfile productType],
+        @"marketingName" : [DSPProfile marketingName],
+        @"enabled" : @([DSPProfile isSpoofEnabled]),
+        @"loadedAt" : @((NSInteger)[[NSDate date] timeIntervalSince1970]),
+    };
+    [info writeToFile:@"/var/mobile/Library/Caches/com.appbackup.devicespoof.lastload.plist" atomically:YES];
+}
+
+static void DSPEnsureReady(void) {
+    if (gDSPAnswersReady) {
+        return;
+    }
+    [DSPProfile reloadPreferences];
+    if (![DSPProfile isSpoofEnabled]) {
+        gDSPAnswersReady = YES;
+        return;
+    }
+    DSPPrepareAnswers();
+    DSPResolveOriginals();
+    gDSPAnswersReady = YES;
+}
 
 typedef struct {
     void *target;
     void *replacement;
 } DSPBind;
+
+static void DSPPrepareAnswers(void);
+static void DSPResolveOriginals(void);
 
 static CFStringRef DSPAnswer(CFStringRef property) {
     if (!property || CFGetTypeID(property) != CFStringGetTypeID()) {
@@ -360,6 +391,7 @@ static void DSPPrepareAnswers(void) {
 %hook UIDevice
 
 - (NSUUID *)identifierForVendor {
+    DSPEnsureReady();
     if ([DSPProfile isSpoofEnabled]) {
         NSUUID *vendor = [DSPProfile spoofedVendorIdentifier];
         if (vendor) {
@@ -370,6 +402,7 @@ static void DSPPrepareAnswers(void) {
 }
 
 - (NSString *)systemVersion {
+    DSPEnsureReady();
     if ([DSPProfile isSpoofEnabled]) {
         return [DSPProfile spoofedOSVersion];
     }
@@ -377,6 +410,15 @@ static void DSPPrepareAnswers(void) {
 }
 
 - (NSString *)model {
+    DSPEnsureReady();
+    if ([DSPProfile isSpoofEnabled]) {
+        return [DSPProfile marketingName];
+    }
+    return %orig;
+}
+
+- (NSString *)localizedModel {
+    DSPEnsureReady();
     if ([DSPProfile isSpoofEnabled]) {
         return [DSPProfile marketingName];
     }
@@ -420,6 +462,9 @@ static void DSPPrepareAnswers(void) {
         if ([DSPShopeeReport isOSVersionKey:defaultName]) {
             return [DSPShopeeReport osVersionForReports];
         }
+        if ([DSPShopeeReport isMarketingNameKey:defaultName]) {
+            return [DSPShopeeReport marketingNameForReports];
+        }
     }
     return %orig;
 }
@@ -441,6 +486,9 @@ static void DSPPrepareAnswers(void) {
     if ([DSPShopeeReport isOSVersionKey:defaultName]) {
         return [DSPShopeeReport osVersionForReports];
     }
+    if ([DSPShopeeReport isMarketingNameKey:defaultName]) {
+        return [DSPShopeeReport marketingNameForReports];
+    }
     return value;
 }
 
@@ -457,6 +505,68 @@ static void DSPPrepareAnswers(void) {
 }
 
 %end
+
+%hookf(CFTypeRef, MGCopyAnswer, CFStringRef property) {
+    DSPEnsureReady();
+    if (![DSPProfile isSpoofEnabled]) {
+        return %orig(property);
+    }
+    CFStringRef answer = DSPAnswer(property);
+    if (answer) {
+        return CFRetain(answer);
+    }
+    return %orig(property);
+}
+
+%hookf(int, sysctlbyname, const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
+    DSPEnsureReady();
+    int result = %orig(name, oldp, oldlenp, newp, newlen);
+    if (![DSPProfile isSpoofEnabled] || result != 0 || !name || !oldp || !oldlenp) {
+        return result;
+    }
+    if (strcmp(name, "hw.machine") == 0 || strcmp(name, "hw.product") == 0) {
+        DSPReplaceCString(oldp, oldlenp, kDSPMachineUTF8);
+    } else if (strcmp(name, "hw.model") == 0) {
+        DSPReplaceCString(oldp, oldlenp, kDSPModelUTF8);
+    } else if (kDSPIOSVersionUTF8 && (strcmp(name, "kern.osproductversion") == 0 || strcmp(name, "kern.osversion") == 0)) {
+        DSPReplaceCString(oldp, oldlenp, kDSPIOSVersionUTF8);
+    }
+    return result;
+}
+
+%hookf(int, sysctl, int *name, unsigned int namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
+    DSPEnsureReady();
+    int result = %orig(name, namelen, oldp, oldlenp, newp, newlen);
+    if (![DSPProfile isSpoofEnabled] || result != 0 || !name || namelen < 2 || !oldp || !oldlenp || name[0] != CTL_HW) {
+        return result;
+    }
+    if (name[1] == HW_MACHINE) {
+        DSPReplaceCString(oldp, oldlenp, kDSPMachineUTF8);
+    } else if (name[1] == HW_MODEL) {
+        DSPReplaceCString(oldp, oldlenp, kDSPModelUTF8);
+    }
+    return result;
+}
+
+%hookf(int, uname, struct utsname *buffer) {
+    DSPEnsureReady();
+    int result = %orig(buffer);
+    if ([DSPProfile isSpoofEnabled] && result == 0 && buffer && kDSPMachineUTF8) {
+        strlcpy(buffer->machine, kDSPMachineUTF8, sizeof(buffer->machine));
+    }
+    return result;
+}
+
+%hookf(OSStatus, SecItemCopyMatching, CFDictionaryRef query, CFTypeRef *result) {
+    DSPEnsureReady();
+    if ([DSPProfile isSpoofEnabled] && DSPQueryIsPersistedDeviceSecret(query)) {
+        if (result) {
+            *result = NULL;
+        }
+        return errSecItemNotFound;
+    }
+    return %orig(query, result);
+}
 
 static void *DSPResolveOriginalSymbol(const char *name) {
     void *sym = dlsym(RTLD_DEFAULT, name);
@@ -490,13 +600,11 @@ static void DSPResolveOriginals(void) {
         return;
     }
     [DSPProfile reloadPreferences];
-    if (![DSPProfile isSpoofEnabled]) {
-        installed = YES;
-        return;
+    DSPEnsureReady();
+    if ([DSPProfile isSpoofEnabled]) {
+        DSPRebindLoadedImages();
+        _dyld_register_func_for_add_image(DSPDyldImageAdded);
     }
-    DSPPrepareAnswers();
-    DSPResolveOriginals();
-    DSPRebindLoadedImages();
-    _dyld_register_func_for_add_image(DSPDyldImageAdded);
+    DSPWriteLoadMarker();
     installed = YES;
 }
