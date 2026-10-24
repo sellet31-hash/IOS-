@@ -15,6 +15,8 @@
 + (NSString *)hardwareModel;
 + (NSString *)hwMachine;
 + (NSString *)marketingName;
++ (NSString *)spoofedOSVersion;
++ (const char *)osVersionUTF8;
 
 + (CGRect)screenBounds;
 + (CGFloat)screenScale;
@@ -23,6 +25,7 @@
 + (BOOL)isSpoofEnabled;
 + (BOOL)simulateFreshInstall;
 + (NSUUID *)spoofedVendorIdentifier;
++ (NSString *)shopeeDeviceFingerprintHex;
 + (void)reloadPreferences;
 
 @end

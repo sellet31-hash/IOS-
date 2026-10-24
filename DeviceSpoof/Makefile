@@ -6,7 +6,7 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME := DeviceSpoof
 
-DeviceSpoof_FILES := Tweak.x src/DSPProfile.m
+DeviceSpoof_FILES := Tweak.x src/DSPProfile.m src/DSPShopeeReport.m
 DeviceSpoof_CFLAGS := -fobjc-arc -Isrc
 DeviceSpoof_FRAMEWORKS := UIKit Security Foundation CoreFoundation CoreGraphics
 DeviceSpoof_INSTALL_PATH := /Library/MobileSubstrate/DynamicLibraries

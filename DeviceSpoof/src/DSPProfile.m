@@ -1,5 +1,6 @@
 #import "DSPProfile.h"
 #import <Foundation/Foundation.h>
+#import <Security/Security.h>
 
 static NSString *const kDSPPrefsPathRootless = @"/var/jb/Library/Preferences/com.appbackup.devicespoof.plist";
 static NSString *const kDSPKeyEnabled = @"enabled";
@@ -10,9 +11,12 @@ static NSString *const kDSPKeyStoredInstallUUID = @"storedInstallUUID";
 static NSString *const kDSPKeyRegenerateVendorId = @"regenerateVendorId";
 static NSString *const kDSPKeyRegenerateFreshInstall = @"regenerateFreshInstall";
 static NSString *const kDSPKeySimulateFreshInstall = @"simulateFreshInstall";
+static NSString *const kDSPKeyDeviceFingerprint = @"deviceFingerprint";
+static NSString *const kDSPKeyStoredDeviceFingerprint = @"storedDeviceFingerprint";
 
-static const char kDSPProductTypeUTF8[] = "iPhone14,5";
-static const char kDSPHardwareModelUTF8[] = "D17AP";
+static const char kDSPProductTypeUTF8[] = "iPhone18,3";
+static const char kDSPHardwareModelUTF8[] = "V57AP";
+static const char kDSPIOSVersionUTF8[] = "26.0";
 static const char kDSPSerialUTF8[] = "F3PF534FRQ7E";
 static const char kDSPMLBUTF8[] = "F3PF534FRQ7EH7ABC";
 
@@ -20,6 +24,7 @@ static BOOL sDSPEnabled = YES;
 static BOOL sSimulateFreshInstall = YES;
 static NSUUID *sVendorUUID = nil;
 static NSString *sInstallUUIDString = nil;
+static NSString *sDeviceFingerprintHex = nil;
 
 static NSUUID *DSPParseUUID(NSString *value) {
     if (value.length == 0) {
@@ -37,6 +42,19 @@ static void DSPSavePlist(NSDictionary *plist) {
 
 static NSString *DSPFreshUUIDString(void) {
     return [[NSUUID UUID] UUIDString];
+}
+
+static NSString *DSPFreshDeviceFingerprintHex(void) {
+    uint8_t bytes[16];
+    if (SecRandomCopyBytes(kSecRandomDefault, sizeof(bytes), bytes) == errSecSuccess) {
+        NSMutableString *hex = [NSMutableString stringWithCapacity:32];
+        for (NSUInteger i = 0; i < sizeof(bytes); i++) {
+            [hex appendFormat:@"%02X", bytes[i]];
+        }
+        return hex;
+    }
+    NSString *raw = [[NSUUID UUID].UUIDString stringByReplacingOccurrencesOfString:@"-" withString:@""];
+    return raw.uppercaseString;
 }
 
 @implementation DSPProfile
@@ -68,7 +86,23 @@ static NSString *DSPFreshUUIDString(void) {
         [plist removeObjectForKey:kDSPKeyRegenerateVendorId];
         plist[kDSPKeyStoredVendorUUID] = DSPFreshUUIDString();
         plist[kDSPKeyStoredInstallUUID] = DSPFreshUUIDString();
+        plist[kDSPKeyStoredDeviceFingerprint] = DSPFreshDeviceFingerprintHex();
         dirty = YES;
+    }
+
+    NSString *manualFingerprint = plist[kDSPKeyDeviceFingerprint];
+    if (manualFingerprint.length > 0) {
+        sDeviceFingerprintHex = [manualFingerprint uppercaseString];
+    } else {
+        NSString *storedFingerprint = plist[kDSPKeyStoredDeviceFingerprint];
+        if (storedFingerprint.length > 0) {
+            sDeviceFingerprintHex = [storedFingerprint uppercaseString];
+        } else {
+            NSString *fresh = DSPFreshDeviceFingerprintHex();
+            plist[kDSPKeyStoredDeviceFingerprint] = fresh;
+            sDeviceFingerprintHex = fresh;
+            dirty = YES;
+        }
     }
 
     NSString *manualInstall = plist[kDSPKeyInstallUUID];
@@ -118,6 +152,10 @@ static NSString *DSPFreshUUIDString(void) {
     return sVendorUUID;
 }
 
++ (NSString *)shopeeDeviceFingerprintHex {
+    return sDeviceFingerprintHex ?: @"";
+}
+
 + (const char *)installSessionUUIDUTF8 {
     return sInstallUUIDString.UTF8String ?: "";
 }
@@ -143,23 +181,31 @@ static NSString *DSPFreshUUIDString(void) {
 }
 
 + (NSString *)productType {
-    return @"iPhone14,5";
+    return @"iPhone18,3";
 }
 
 + (NSString *)hardwareModel {
-    return @"D17AP";
+    return @"V57AP";
 }
 
 + (NSString *)hwMachine {
-    return @"iPhone14,5";
+    return @"iPhone18,3";
 }
 
 + (NSString *)marketingName {
-    return @"iPhone 13";
+    return @"iPhone 17";
+}
+
++ (NSString *)spoofedOSVersion {
+    return @"26.0";
+}
+
++ (const char *)osVersionUTF8 {
+    return kDSPIOSVersionUTF8;
 }
 
 + (CGRect)screenBounds {
-    return CGRectMake(0, 0, 390, 844);
+    return CGRectMake(0, 0, 393, 852);
 }
 
 + (CGFloat)screenScale {
@@ -167,7 +213,7 @@ static NSString *DSPFreshUUIDString(void) {
 }
 
 + (CGRect)nativeScreenBounds {
-    return CGRectMake(0, 0, 1170, 2532);
+    return CGRectMake(0, 0, 1179, 2556);
 }
 
 @end

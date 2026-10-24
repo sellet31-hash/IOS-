@@ -10,6 +10,7 @@
 #import <sys/utsname.h>
 #import <unistd.h>
 #import "DSPProfile.h"
+#import "DSPShopeeReport.h"
 
 #ifndef VM_PROT_COPY
 #define VM_PROT_COPY 0x10
@@ -36,6 +37,9 @@ static CFStringRef kDSPInstallUUIDKey;
 static CFStringRef kDSPInstallationUUIDKey;
 static CFStringRef kDSPSystemSessionUUIDKey;
 static CFStringRef kDSPBootSessionUUIDKey;
+static CFStringRef kDSPProductVersionKey;
+static CFStringRef kDSPHumanReadableProductVersionKey;
+static CFStringRef kDSPProductVersionValue;
 static const char *kDSPMachineUTF8;
 static const char *kDSPModelUTF8;
 
@@ -67,6 +71,12 @@ static CFStringRef DSPAnswer(CFStringRef property) {
             (kDSPSystemSessionUUIDKey && CFEqual(property, kDSPSystemSessionUUIDKey)) ||
             (kDSPBootSessionUUIDKey && CFEqual(property, kDSPBootSessionUUIDKey))) {
             return kDSPInstallSessionValue;
+        }
+    }
+    if (kDSPProductVersionValue) {
+        if ((kDSPProductVersionKey && CFEqual(property, kDSPProductVersionKey)) ||
+            (kDSPHumanReadableProductVersionKey && CFEqual(property, kDSPHumanReadableProductVersionKey))) {
+            return kDSPProductVersionValue;
         }
     }
     return NULL;
@@ -311,6 +321,9 @@ static void DSPPrepareAnswers(void) {
     kDSPSystemSessionUUIDKey = CFStringCreateWithCString(NULL, "SystemSessionUUID", kCFStringEncodingUTF8);
     kDSPBootSessionUUIDKey = CFStringCreateWithCString(NULL, "BootSessionUUID", kCFStringEncodingUTF8);
     kDSPInstallSessionValue = CFStringCreateWithCString(NULL, [DSPProfile installSessionUUIDUTF8], kCFStringEncodingUTF8);
+    kDSPProductVersionKey = CFStringCreateWithCString(NULL, "ProductVersion", kCFStringEncodingUTF8);
+    kDSPHumanReadableProductVersionKey = CFStringCreateWithCString(NULL, "HumanReadableProductVersionString", kCFStringEncodingUTF8);
+    kDSPProductVersionValue = CFStringCreateWithCString(NULL, [DSPProfile osVersionUTF8], kCFStringEncodingUTF8);
 }
 
 %hook UIDevice
@@ -321,6 +334,64 @@ static void DSPPrepareAnswers(void) {
         if (vendor) {
             return vendor;
         }
+    }
+    return %orig;
+}
+
+- (NSString *)systemVersion {
+    if ([DSPProfile isSpoofEnabled]) {
+        return [DSPProfile spoofedOSVersion];
+    }
+    return %orig;
+}
+
+%end
+
+%hook NSUserDefaults
+
+- (NSString *)stringForKey:(NSString *)defaultName {
+    if ([DSPProfile isSpoofEnabled] && defaultName.length > 0) {
+        if ([DSPShopeeReport isDeviceFingerprintKey:defaultName]) {
+            return [DSPShopeeReport deviceFingerprintHex];
+        }
+        if ([DSPShopeeReport isDeviceModelKey:defaultName]) {
+            return [DSPShopeeReport productTypeForReports];
+        }
+        if ([DSPShopeeReport isOSVersionKey:defaultName]) {
+            return [DSPShopeeReport osVersionForReports];
+        }
+    }
+    return %orig;
+}
+
+- (id)objectForKey:(NSString *)defaultName {
+    id value = %orig;
+    if (![DSPProfile isSpoofEnabled] || defaultName.length == 0) {
+        return value;
+    }
+    if ([DSPShopeeReport isDeviceFingerprintKey:defaultName]) {
+        return [DSPShopeeReport deviceFingerprintHex];
+    }
+    if ([DSPShopeeReport isDeviceModelKey:defaultName] && [value isKindOfClass:[NSString class]]) {
+        NSString *stringValue = (NSString *)value;
+        if ([stringValue hasPrefix:@"iPhone"]) {
+            return [DSPShopeeReport productTypeForReports];
+        }
+    }
+    if ([DSPShopeeReport isOSVersionKey:defaultName]) {
+        return [DSPShopeeReport osVersionForReports];
+    }
+    return value;
+}
+
+%end
+
+%hook NSJSONSerialization
+
++ (NSData *)dataWithJSONObject:(id)obj options:(NSJSONWritingOptions)opt error:(NSError **)error {
+    if ([DSPProfile isSpoofEnabled] && obj) {
+        id rewritten = [DSPShopeeReport rewritePayloadIfNeeded:obj];
+        return %orig(rewritten, opt, error);
     }
     return %orig;
 }

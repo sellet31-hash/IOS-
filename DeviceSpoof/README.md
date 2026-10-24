@@ -1,6 +1,23 @@
-# DeviceSpoof（台湾虾皮 → iPhone 13 · 免刷机注册向）
+# DeviceSpoof（台湾虾皮 → iPhone 17 / iOS 26.0 · 免刷机注册向）
 
 仅在 **台湾虾皮** 进程内生效。目标：在不重刷 iOS 的前提下，尽量模拟 **「刷机后首次安装虾皮」** 时客户端会上报的安装实例 ID，而不是只改序列号。
+
+## 1.2.0
+
+| 硬件档 | `iPhone18,3`（iPhone 17）、`V57AP` |
+| 系统档 | **iOS 26.0**（`UIDevice.systemVersion`、`ProductVersion`、上报 JSON `os_version`/`api`） |
+
+## 1.1.0（基于 Frida 抓包）
+
+抓包确认虾皮客户端主键是 **32 位 HEX** 的 `deviceId` / `deviceFingerprint` / `device_id`（三处同值），机型字段为 `device_model` / `devices`。详见 [CAPTURE-SUMMARY.md](./CAPTURE-SUMMARY.md)。
+
+| 新增 | 作用 |
+|------|------|
+| `storedDeviceFingerprint` | 与 IDFV/InstallUUID 一并轮换 |
+| `NSJSONSerialization` |  outgoing JSON 改写设备字段 |
+| `NSUserDefaults` | 读缓存时返回 spoof 指纹/机型 |
+
+Frida 对这台虾皮易白屏，**不要再依赖进程注入抓注册**；用插件 + 必要时 Reqable。
 
 ## 1.0.9 相对刷机多做了什么
 
@@ -38,7 +55,9 @@
 |----|------|
 | `enabled` | 总开关 |
 | `simulateFreshInstall` | 默认 true；模拟首次安装（InstallUUID + 钥匙串读拦截） |
-| `regenerateFreshInstall` | true 一次 → 换新的 IDFV + InstallUUID |
+| `regenerateFreshInstall` | true 一次 → 换新的 IDFV + InstallUUID + **deviceFingerprint** |
+| `storedDeviceFingerprint` | **自动随机** 32 位 HEX，写入 plist 后持久化（一般不用管） |
+| `deviceFingerprint` | 可选；仅当你要固定某一串时才填，不填则全程自动随机 |
 | `regenerateVendorId` | 同 regenerateFreshInstall（兼容旧键） |
 | `vendorUUID` / `installUUID` | 可选，手动固定 UUID |
 
