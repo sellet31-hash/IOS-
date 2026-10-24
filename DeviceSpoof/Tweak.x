@@ -43,6 +43,9 @@ static CFStringRef kDSPHumanReadableProductVersionKey;
 static CFStringRef kDSPProductVersionValue;
 static const char *kDSPMachineUTF8;
 static const char *kDSPModelUTF8;
+static const char *kDSPIOSVersionUTF8;
+static unsigned int gDSPBindCount = 0;
+static DSPBind gDSPBinds[6];
 
 typedef struct {
     void *target;
@@ -153,6 +156,8 @@ static int DSP_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void 
         DSPReplaceCString(oldp, oldlenp, kDSPMachineUTF8);
     } else if (strcmp(name, "hw.model") == 0) {
         DSPReplaceCString(oldp, oldlenp, kDSPModelUTF8);
+    } else if (kDSPIOSVersionUTF8 && (strcmp(name, "kern.osproductversion") == 0 || strcmp(name, "kern.osversion") == 0)) {
+        DSPReplaceCString(oldp, oldlenp, kDSPIOSVersionUTF8);
     }
     return result;
 }
@@ -271,43 +276,68 @@ static void DSPRebindImage(const struct mach_header *header, intptr_t slide, con
     }
 }
 
-static void DSPRebindLoadedImages(void) {
-    DSPBind binds[6];
-    unsigned int count = 0;
+static void DSPRebuildBindTable(void) {
+    gDSPBindCount = 0;
     if (orig_MGCopyAnswer) {
-        binds[count++] = (DSPBind){(void *)orig_MGCopyAnswer, (void *)DSP_MGCopyAnswer};
+        gDSPBinds[gDSPBindCount++] = (DSPBind){(void *)orig_MGCopyAnswer, (void *)DSP_MGCopyAnswer};
     }
     if (orig_sysctlbyname) {
-        binds[count++] = (DSPBind){(void *)orig_sysctlbyname, (void *)DSP_sysctlbyname};
+        gDSPBinds[gDSPBindCount++] = (DSPBind){(void *)orig_sysctlbyname, (void *)DSP_sysctlbyname};
     }
     if (orig_sysctl) {
-        binds[count++] = (DSPBind){(void *)orig_sysctl, (void *)DSP_sysctl};
+        gDSPBinds[gDSPBindCount++] = (DSPBind){(void *)orig_sysctl, (void *)DSP_sysctl};
     }
     if (orig_uname) {
-        binds[count++] = (DSPBind){(void *)orig_uname, (void *)DSP_uname};
+        gDSPBinds[gDSPBindCount++] = (DSPBind){(void *)orig_uname, (void *)DSP_uname};
     }
     if (orig_dlsym) {
-        binds[count++] = (DSPBind){(void *)orig_dlsym, (void *)DSP_dlsym};
+        gDSPBinds[gDSPBindCount++] = (DSPBind){(void *)orig_dlsym, (void *)DSP_dlsym};
     }
     if (orig_SecItemCopyMatching) {
-        binds[count++] = (DSPBind){(void *)orig_SecItemCopyMatching, (void *)DSP_SecItemCopyMatching};
+        gDSPBinds[gDSPBindCount++] = (DSPBind){(void *)orig_SecItemCopyMatching, (void *)DSP_SecItemCopyMatching};
     }
-    if (count == 0) {
+}
+
+static void DSPRebindOneImage(const struct mach_header *header, intptr_t slide, const char *name) {
+    if (!header || gDSPBindCount == 0) {
+        return;
+    }
+    if (name && !DSPImageCanBePatched(name)) {
+        return;
+    }
+    DSPRebindImage(header, slide, gDSPBinds, gDSPBindCount);
+}
+
+static void DSPDyldImageAdded(const struct mach_header *header, intptr_t slide) {
+    if (![DSPProfile isSpoofEnabled]) {
+        return;
+    }
+    const char *name = NULL;
+    uint32_t imageCount = _dyld_image_count();
+    for (uint32_t index = 0; index < imageCount; index++) {
+        if (_dyld_get_image_header(index) == header) {
+            name = _dyld_get_image_name(index);
+            break;
+        }
+    }
+    DSPRebindOneImage(header, slide, name);
+}
+
+static void DSPRebindLoadedImages(void) {
+    DSPRebuildBindTable();
+    if (gDSPBindCount == 0) {
         return;
     }
     uint32_t imageCount = _dyld_image_count();
     for (uint32_t index = 0; index < imageCount; index++) {
-        const char *name = _dyld_get_image_name(index);
-        if (!DSPImageCanBePatched(name)) {
-            continue;
-        }
-        DSPRebindImage(_dyld_get_image_header(index), _dyld_get_image_vmaddr_slide(index), binds, count);
+        DSPRebindOneImage(_dyld_get_image_header(index), _dyld_get_image_vmaddr_slide(index), _dyld_get_image_name(index));
     }
 }
 
 static void DSPPrepareAnswers(void) {
     kDSPMachineUTF8 = [DSPProfile hwMachineUTF8];
     kDSPModelUTF8 = [DSPProfile hardwareModelUTF8];
+    kDSPIOSVersionUTF8 = [DSPProfile osVersionUTF8];
     kDSPProductTypeKey = CFStringCreateWithCString(NULL, "ProductType", kCFStringEncodingUTF8);
     kDSPHardwareModelKey = CFStringCreateWithCString(NULL, "HardwareModel", kCFStringEncodingUTF8);
     kDSPHWModelStrKey = CFStringCreateWithCString(NULL, "HWModelStr", kCFStringEncodingUTF8);
@@ -340,6 +370,35 @@ static void DSPPrepareAnswers(void) {
 }
 
 - (NSString *)systemVersion {
+    if ([DSPProfile isSpoofEnabled]) {
+        return [DSPProfile spoofedOSVersion];
+    }
+    return %orig;
+}
+
+- (NSString *)model {
+    if ([DSPProfile isSpoofEnabled]) {
+        return [DSPProfile marketingName];
+    }
+    return %orig;
+}
+
+%end
+
+%hook NSProcessInfo
+
+- (NSOperatingSystemVersion)operatingSystemVersion {
+    if ([DSPProfile isSpoofEnabled]) {
+        NSOperatingSystemVersion version = {0};
+        version.majorVersion = 26;
+        version.minorVersion = 0;
+        version.patchVersion = 0;
+        return version;
+    }
+    return %orig;
+}
+
+- (NSString *)operatingSystemVersionString {
     if ([DSPProfile isSpoofEnabled]) {
         return [DSPProfile spoofedOSVersion];
     }
@@ -399,6 +458,14 @@ static void DSPPrepareAnswers(void) {
 
 %end
 
+static void *DSPResolveOriginalSymbol(const char *name) {
+    void *sym = dlsym(RTLD_DEFAULT, name);
+    if (sym) {
+        return sym;
+    }
+    return dlsym(RTLD_NEXT, name);
+}
+
 static void DSPResolveOriginals(void) {
     void *gestalt = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
     if (!gestalt) {
@@ -407,11 +474,14 @@ static void DSPResolveOriginals(void) {
     if (gestalt) {
         orig_MGCopyAnswer = (CFTypeRef (*)(CFStringRef))dlsym(gestalt, "MGCopyAnswer");
     }
-    orig_sysctlbyname = (int (*)(const char *, void *, size_t *, void *, size_t))dlsym(RTLD_DEFAULT, "sysctlbyname");
-    orig_sysctl = (int (*)(int *, unsigned int, void *, size_t *, void *, size_t))dlsym(RTLD_DEFAULT, "sysctl");
-    orig_uname = (int (*)(struct utsname *))dlsym(RTLD_DEFAULT, "uname");
+    if (!orig_MGCopyAnswer) {
+        orig_MGCopyAnswer = (CFTypeRef (*)(CFStringRef))DSPResolveOriginalSymbol("MGCopyAnswer");
+    }
+    orig_sysctlbyname = (int (*)(const char *, void *, size_t *, void *, size_t))DSPResolveOriginalSymbol("sysctlbyname");
+    orig_sysctl = (int (*)(int *, unsigned int, void *, size_t *, void *, size_t))DSPResolveOriginalSymbol("sysctl");
+    orig_uname = (int (*)(struct utsname *))DSPResolveOriginalSymbol("uname");
     orig_dlsym = (void *(*)(void *, const char *))dlsym(RTLD_DEFAULT, "dlsym");
-    orig_SecItemCopyMatching = (OSStatus (*)(CFDictionaryRef, CFTypeRef *))dlsym(RTLD_DEFAULT, "SecItemCopyMatching");
+    orig_SecItemCopyMatching = (OSStatus (*)(CFDictionaryRef, CFTypeRef *))DSPResolveOriginalSymbol("SecItemCopyMatching");
 }
 
 %ctor {
@@ -427,5 +497,6 @@ static void DSPResolveOriginals(void) {
     DSPPrepareAnswers();
     DSPResolveOriginals();
     DSPRebindLoadedImages();
+    _dyld_register_func_for_add_image(DSPDyldImageAdded);
     installed = YES;
 }

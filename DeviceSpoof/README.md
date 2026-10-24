@@ -2,6 +2,14 @@
 
 仅在 **台湾虾皮** 进程内生效。目标：在不重刷 iOS 的前提下，尽量模拟 **「刷机后首次安装虾皮」** 时客户端会上报的安装实例 ID，而不是只改序列号。
 
+## 1.2.3
+
+- 晚加载库（Cronet 等）自动 GOT rebind  
+- 补充 `kern.osproductversion`、`NSProcessInfo` 系统版本  
+- Filter 增加 `ShopeeTW` 可执行名  
+
+**伪装只在台湾虾皮 App 内生效**，系统「设置 → 关于本机」仍是真机。
+
 ## 1.2.0
 
 | 硬件档 | `iPhone18,3`（iPhone 17）、`V57AP` |

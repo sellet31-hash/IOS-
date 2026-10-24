@@ -8,6 +8,11 @@
 		<array>
 			<string>com.beeasy.shopee.tw</string>
 		</array>
+		<key>Executables</key>
+		<array>
+			<string>ShopeeTW</string>
+			<string>beeasy.shopee.tw</string>
+		</array>
 	</dict>
 </dict>
 </plist>
