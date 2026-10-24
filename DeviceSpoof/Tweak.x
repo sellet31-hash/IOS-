@@ -18,6 +18,16 @@
 #define VM_PROT_COPY 0x10
 #endif
 
+typedef struct {
+    void *target;
+    void *replacement;
+} DSPBind;
+
+static void DSPPrepareAnswers(void);
+static void DSPResolveOriginals(void);
+
+extern CFTypeRef MGCopyAnswer(CFStringRef property);
+
 static CFTypeRef (*orig_MGCopyAnswer)(CFStringRef);
 static int (*orig_sysctlbyname)(const char *, void *, size_t *, void *, size_t);
 static int (*orig_sysctl)(int *, unsigned int, void *, size_t *, void *, size_t);
@@ -51,13 +61,13 @@ static BOOL gDSPAnswersReady = NO;
 
 static void DSPWriteLoadMarker(void) {
     NSDictionary *info = @{
-        @"version" : @"1.2.5",
+        @"version" : @"1.2.6",
         @"bundle" : [[NSBundle mainBundle] bundleIdentifier] ?: @"",
         @"productType" : [DSPProfile productType],
         @"marketingName" : [DSPProfile marketingName],
         @"enabled" : @([DSPProfile isSpoofEnabled]),
         @"loadedAt" : @((NSInteger)[[NSDate date] timeIntervalSince1970]),
-        @"markerHint" : @"Check this app's Library/Caches/ in Filza (sandbox), or /var/jb/tmp/",
+        @"markerHint" : @"Filza: Shopee container Library/Caches, or /var/jb/tmp/",
     };
     NSData *data = [NSPropertyListSerialization dataWithPropertyList:info
                                                             format:NSPropertyListXMLFormat_v1_0
@@ -87,14 +97,6 @@ static void DSPEnsureReady(void) {
     DSPResolveOriginals();
     gDSPAnswersReady = YES;
 }
-
-typedef struct {
-    void *target;
-    void *replacement;
-} DSPBind;
-
-static void DSPPrepareAnswers(void);
-static void DSPResolveOriginals(void);
 
 static CFStringRef DSPAnswer(CFStringRef property) {
     if (!property || CFGetTypeID(property) != CFStringGetTypeID()) {

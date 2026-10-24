@@ -2,10 +2,13 @@
 
 仅在 **台湾虾皮** 进程内生效。目标：在不重刷 iOS 的前提下，尽量模拟 **「刷机后首次安装虾皮」** 时客户端会上报的安装实例 ID，而不是只改序列号。
 
+## 1.2.6
+
+- 修复 CI：`DSPBind` 类型顺序、deb 内同步 **TweakInject**（无 postinst）  
+
 ## 1.2.5
 
 - **Filter 恢复仅 `Bundles`**（1.2.3 误加 `Executables` 会导致 ElleKit **整包不注入**）  
-- 安装后 **postinst** 同步到 `/var/jb/usr/lib/TweakInject`（多巴胺常见路径）  
 - 自检文件在 **虾皮沙盒** `Library/Caches/com.appbackup.devicespoof.lastload.plist`，或 `/var/jb/tmp/` 同名  
 
 ## 1.2.4

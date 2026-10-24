@@ -13,3 +13,7 @@ DeviceSpoof_INSTALL_PATH := /Library/MobileSubstrate/DynamicLibraries
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
+before-package::
+	$(ECHO_NOTHING)mkdir -p $(THEOS_STAGING_DIR)/var/jb/usr/lib/TweakInject$(ECHO_END)
+	$(ECHO_NOTHING)cp $(THEOS_STAGING_DIR)/var/jb/Library/MobileSubstrate/DynamicLibraries/DeviceSpoof.dylib $(THEOS_STAGING_DIR)/var/jb/usr/lib/TweakInject/$(ECHO_END)
+	$(ECHO_NOTHING)cp $(THEOS_STAGING_DIR)/var/jb/Library/MobileSubstrate/DynamicLibraries/DeviceSpoof.plist $(THEOS_STAGING_DIR)/var/jb/usr/lib/TweakInject/$(ECHO_END)
