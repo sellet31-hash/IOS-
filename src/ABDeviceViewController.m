@@ -194,7 +194,14 @@
 }
 
 - (void)toggleChanged:(UISwitch *)toggle {
-    [ABDeviceStore setEnabled:toggle.isOn];
+    NSError *error = nil;
+    if (![ABDeviceStore setEnabled:toggle.isOn error:&error]) {
+        [self reloadSelection];
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"没有保存" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
     [self reloadSelection];
 }
 

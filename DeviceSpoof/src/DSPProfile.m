@@ -123,30 +123,50 @@ static NSString *DSPSandboxPrefsPath(void) {
     return [home stringByAppendingPathComponent:[@"Library/Preferences" stringByAppendingPathComponent:kDSPPrefsFileName]];
 }
 
-static NSMutableDictionary *DSPLoadPlist(void) {
-    NSDictionary *rootless = [NSDictionary dictionaryWithContentsOfFile:kDSPPrefsPathRootless];
-    if (rootless.count > 0) {
-        return [rootless mutableCopy];
-    }
+static BOOL DSPPrefsHasSelection(NSDictionary *prefs) {
+    NSString *selected = prefs[@"selectedProductType"];
+    return [selected isKindOfClass:[NSString class]] && selected.length > 0;
+}
+
+static NSArray<NSString *> *DSPPrefsPaths(void) {
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
     NSString *sandbox = DSPSandboxPrefsPath();
-    NSDictionary *local = sandbox.length ? [NSDictionary dictionaryWithContentsOfFile:sandbox] : nil;
-    return local ? [local mutableCopy] : [NSMutableDictionary dictionary];
+    if (sandbox.length) {
+        [paths addObject:sandbox];
+    }
+    [paths addObject:[@"/var/mobile/Library/Preferences" stringByAppendingPathComponent:kDSPPrefsFileName]];
+    [paths addObject:[@"/private/var/mobile/Library/Preferences" stringByAppendingPathComponent:kDSPPrefsFileName]];
+    [paths addObject:[@"/var/jb/var/mobile/Library/Preferences" stringByAppendingPathComponent:kDSPPrefsFileName]];
+    [paths addObject:kDSPPrefsPathRootless];
+    return paths;
+}
+
+static NSMutableDictionary *DSPLoadPlist(void) {
+    NSMutableDictionary *fallback = nil;
+    for (NSString *path in DSPPrefsPaths()) {
+        NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:path];
+        if (prefs.count == 0) {
+            continue;
+        }
+        if (DSPPrefsHasSelection(prefs)) {
+            return [prefs mutableCopy];
+        }
+        if (!fallback) {
+            fallback = [prefs mutableCopy];
+        }
+    }
+    return fallback ?: [NSMutableDictionary dictionary];
 }
 
 static void DSPSavePlist(NSDictionary *plist) {
     if (!plist) {
         return;
     }
-    [plist writeToFile:kDSPPrefsPathRootless atomically:YES];
-    NSString *sandbox = DSPSandboxPrefsPath();
-    if (sandbox.length == 0) {
-        return;
+    for (NSString *path in DSPPrefsPaths()) {
+        NSString *directory = [path stringByDeletingLastPathComponent];
+        [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
+        [plist writeToFile:path atomically:YES];
     }
-    [[NSFileManager defaultManager] createDirectoryAtPath:[sandbox stringByDeletingLastPathComponent]
-                              withIntermediateDirectories:YES
-                                               attributes:nil
-                                                    error:nil];
-    [plist writeToFile:sandbox atomically:YES];
 }
 
 static NSString *DSPFreshUUIDString(void) {
