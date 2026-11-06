@@ -15,6 +15,8 @@
 #import <sys/sysctl.h>
 #import <sys/utsname.h>
 #import <unistd.h>
+#import <objc/runtime.h>
+#import <mach-o/nlist.h>
 #import "DSPProfile.h"
 #import "DSPShopeeReport.h"
 
@@ -83,7 +85,7 @@ static BOOL gDSPRealMachineCaptured = NO;
 
 static void DSPWriteLoadMarker(void) {
     NSDictionary *info = @{
-        @"version" : @"1.2.21",
+        @"version" : @"1.2.22",
         @"bundle" : [[NSBundle mainBundle] bundleIdentifier] ?: @"",
         @"process" : [[NSProcessInfo processInfo] processName] ?: @"",
         @"productType" : [DSPProfile productType],
@@ -867,6 +869,202 @@ static void DSPInstallInlineHooks(void) {
     DSPHookLinked(gDSPTargetCFDictionaryGetValue, (void *)DSP_CFDictionaryGetValue, (void **)&orig_CFDictionaryGetValue);
 }
 
+static IMP dspOrigJSON = NULL;
+static IMP dspOrigHTTPBody = NULL;
+static IMP dspOrigUTF8 = NULL;
+static IMP dspOrigModel = NULL;
+static IMP dspOrigSystemVersion = NULL;
+
+static NSData *dsp_dataWithJSON(id self, SEL cmd, id obj, NSUInteger opt, NSError **error) {
+    if ([DSPProfile isSpoofEnabled] && obj) {
+        obj = [DSPShopeeReport rewritePayloadIfNeeded:obj];
+    }
+    return ((NSData *(*)(id, SEL, id, NSUInteger, NSError **))dspOrigJSON)(self, cmd, obj, opt, error);
+}
+
+static void dsp_setHTTPBody(id self, SEL cmd, NSData *body) {
+    if ([DSPProfile isSpoofEnabled] && body.length > 0) {
+        NSData *replaced = [DSPShopeeReport replaceHardwareTokensInData:body];
+        body = replaced ?: body;
+    }
+    ((void (*)(id, SEL, NSData *))dspOrigHTTPBody)(self, cmd, body);
+}
+
+static NSString *dsp_stringWithUTF8(id self, SEL cmd, const char *bytes) {
+    if (gDSPStringHookDepth > 0 || ![DSPProfile isSpoofEnabled] || !bytes) {
+        return ((NSString *(*)(id, SEL, const char *))dspOrigUTF8)(self, cmd, bytes);
+    }
+    const char *realMachine = [DSPProfile realMachineUTF8];
+    if (!realMachine || !strstr(bytes, realMachine)) {
+        return ((NSString *(*)(id, SEL, const char *))dspOrigUTF8)(self, cmd, bytes);
+    }
+    gDSPStringHookDepth++;
+    NSString *value = ((NSString *(*)(id, SEL, const char *))dspOrigUTF8)(self, cmd, bytes);
+    gDSPStringHookDepth--;
+    return value ? [DSPShopeeReport replaceHardwareTokensInString:value] : value;
+}
+
+static NSString *dsp_model(id self, SEL cmd) {
+    if ([DSPProfile isSpoofEnabled]) {
+        return [DSPProfile marketingName];
+    }
+    return ((NSString *(*)(id, SEL))dspOrigModel)(self, cmd);
+}
+
+static NSString *dsp_systemVersion(id self, SEL cmd) {
+    if ([DSPProfile isSpoofEnabled]) {
+        return [DSPProfile spoofedOSVersion];
+    }
+    return ((NSString *(*)(id, SEL))dspOrigSystemVersion)(self, cmd);
+}
+
+static void DSPSwizzle(Class cls, SEL sel, IMP replacement, IMP *original) {
+    Method method = class_getInstanceMethod(cls, sel);
+    if (!method) {
+        method = class_getClassMethod(cls, sel);
+    }
+    if (!method || !original) {
+        return;
+    }
+    *original = method_setImplementation(method, replacement);
+    if (*original) {
+        gDSPReboundSlots++;
+    }
+}
+
+static BOOL DSPImportNameMatches(const char *name, const char **canonical) {
+    if (!name) {
+        return NO;
+    }
+    if (name[0] == '_') {
+        name++;
+    }
+    if (strcmp(name, "sysctlbyname") == 0 || strcmp(name, "sysctl") == 0 || strcmp(name, "uname") == 0) {
+        *canonical = name;
+        return YES;
+    }
+    return NO;
+}
+
+static void DSPRebindNamedImports(const struct mach_header *header, intptr_t slide) {
+    if (!header || header->magic != MH_MAGIC_64) {
+        return;
+    }
+    const struct mach_header_64 *header64 = (const struct mach_header_64 *)header;
+    const struct symtab_command *symtab = NULL;
+    const struct dysymtab_command *dysymtab = NULL;
+    uintptr_t cursor = (uintptr_t)header64 + sizeof(*header64);
+    for (uint32_t commandIndex = 0; commandIndex < header64->ncmds; commandIndex++) {
+        const struct load_command *command = (const struct load_command *)cursor;
+        if (command->cmdsize < sizeof(*command) || cursor + command->cmdsize < cursor) {
+            return;
+        }
+        if (command->cmd == LC_SYMTAB) {
+            symtab = (const struct symtab_command *)command;
+        } else if (command->cmd == LC_DYSYMTAB) {
+            dysymtab = (const struct dysymtab_command *)command;
+        }
+        cursor += command->cmdsize;
+    }
+    if (!symtab || !dysymtab) {
+        return;
+    }
+    uintptr_t linkeditBase = 0;
+    cursor = (uintptr_t)header64 + sizeof(*header64);
+    for (uint32_t commandIndex = 0; commandIndex < header64->ncmds; commandIndex++) {
+        const struct load_command *command = (const struct load_command *)cursor;
+        if (command->cmd == LC_SEGMENT_64) {
+            const struct segment_command_64 *segment = (const struct segment_command_64 *)command;
+            if (strcmp(segment->segname, "__LINKEDIT") == 0) {
+                linkeditBase = (uintptr_t)(segment->vmaddr + slide - segment->fileoff);
+                break;
+            }
+        }
+        cursor += command->cmdsize;
+    }
+    if (!linkeditBase) {
+        return;
+    }
+    const struct nlist_64 *symbols = (const struct nlist_64 *)(linkeditBase + symtab->symoff);
+    const char *strings = (const char *)(linkeditBase + symtab->stroff);
+    const uint32_t *indirect = (const uint32_t *)(linkeditBase + dysymtab->indirectsymoff);
+    cursor = (uintptr_t)header64 + sizeof(*header64);
+    for (uint32_t commandIndex = 0; commandIndex < header64->ncmds; commandIndex++) {
+        const struct load_command *command = (const struct load_command *)cursor;
+        if (command->cmd == LC_SEGMENT_64) {
+            const struct segment_command_64 *segment = (const struct segment_command_64 *)command;
+            const struct section_64 *section = (const struct section_64 *)(segment + 1);
+            for (uint32_t sectionIndex = 0; sectionIndex < segment->nsects; sectionIndex++, section++) {
+                uint32_t type = section->flags & SECTION_TYPE;
+                if (type != S_LAZY_SYMBOL_POINTERS && type != S_NON_LAZY_SYMBOL_POINTERS) {
+                    continue;
+                }
+                uint32_t count = (uint32_t)(section->size / sizeof(void *));
+                void **slots = (void **)(section->addr + slide);
+                for (uint32_t index = 0; index < count; index++) {
+                    uint32_t symbolIndex = indirect[section->reserved1 + index];
+                    if (symbolIndex == INDIRECT_SYMBOL_ABS || symbolIndex == INDIRECT_SYMBOL_LOCAL || symbolIndex == (INDIRECT_SYMBOL_LOCAL | INDIRECT_SYMBOL_ABS)) {
+                        continue;
+                    }
+                    if (symbolIndex >= symtab->nsyms) {
+                        continue;
+                    }
+                    uint32_t stringIndex = symbols[symbolIndex].n_un.n_strx;
+                    if (stringIndex >= symtab->strsize) {
+                        continue;
+                    }
+                    const char *canonical = NULL;
+                    if (!DSPImportNameMatches(strings + stringIndex, &canonical)) {
+                        continue;
+                    }
+                    void *replacement = NULL;
+                    void **original = NULL;
+                    if (strcmp(canonical, "sysctlbyname") == 0) {
+                        replacement = (void *)DSP_sysctlbyname;
+                        original = (void **)&orig_sysctlbyname;
+                    } else if (strcmp(canonical, "sysctl") == 0) {
+                        replacement = (void *)DSP_sysctl;
+                        original = (void **)&orig_sysctl;
+                    } else if (strcmp(canonical, "uname") == 0) {
+                        replacement = (void *)DSP_uname;
+                        original = (void **)&orig_uname;
+                    }
+                    if (!replacement || !original) {
+                        continue;
+                    }
+                    if (!*original) {
+                        *original = dlsym(RTLD_DEFAULT, canonical);
+                    }
+                    if (*original && *original != replacement) {
+                        DSPWriteSlot(&slots[index], replacement);
+                    }
+                }
+            }
+        }
+        cursor += command->cmdsize;
+    }
+}
+
+static void DSPInstallReportSwizzles(void) {
+    DSPSwizzle(objc_getClass("NSJSONSerialization"), @selector(dataWithJSONObject:options:error:), (IMP)dsp_dataWithJSON, &dspOrigJSON);
+    DSPSwizzle(objc_getClass("NSMutableURLRequest"), @selector(setHTTPBody:), (IMP)dsp_setHTTPBody, &dspOrigHTTPBody);
+    DSPSwizzle(objc_getClass("NSString"), @selector(stringWithUTF8String:), (IMP)dsp_stringWithUTF8, &dspOrigUTF8);
+    DSPSwizzle(objc_getClass("UIDevice"), @selector(model), (IMP)dsp_model, &dspOrigModel);
+    DSPSwizzle(objc_getClass("UIDevice"), @selector(systemVersion), (IMP)dsp_systemVersion, &dspOrigSystemVersion);
+}
+
+static void DSPRebindShopeeImports(void) {
+    uint32_t count = _dyld_image_count();
+    for (uint32_t index = 0; index < count; index++) {
+        const char *name = _dyld_get_image_name(index);
+        if (!name || !strstr(name, "ShopeeTW")) {
+            continue;
+        }
+        gDSPImagesSeen++;
+        DSPRebindNamedImports(_dyld_get_image_header(index), _dyld_get_image_vmaddr_slide(index));
+    }
+}
+
 %ctor {
     static BOOL installed = NO;
     if (installed) {
@@ -881,18 +1079,16 @@ static void DSPInstallInlineHooks(void) {
         installed = YES;
         return;
     }
-    %init(ShopeeHooks);
     [DSPProfile reloadPreferences];
     DSPEnsureReady();
     if ([DSPProfile isSpoofEnabled]) {
-        DSPInstallInlineHooks();
-        DSPRebindLoadedImages();
-        _dyld_register_func_for_add_image(DSPDyldImageAdded);
-        dispatch_async(dispatch_get_main_queue(), ^{
-            DSPInstallInlineHooks();
-            DSPRebindLoadedImages();
-            DSPWriteLoadMarker();
-        });
+        char realMachine[32] = {0};
+        size_t realMachineLength = sizeof(realMachine);
+        if (sysctlbyname("hw.machine", realMachine, &realMachineLength, NULL, 0) == 0 && realMachine[0]) {
+            [DSPProfile captureRealMachine:realMachine];
+        }
+        DSPInstallReportSwizzles();
+        DSPRebindShopeeImports();
     }
     DSPWriteLoadMarker();
     installed = YES;
