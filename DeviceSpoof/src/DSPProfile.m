@@ -1,6 +1,7 @@
 #import "DSPProfile.h"
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
+#import <string.h>
 
 static NSString *const kDSPPrefsPathRootless = @"/var/jb/Library/Preferences/com.appbackup.devicespoof.plist";
 static NSString *const kDSPKeyEnabled = @"enabled";
@@ -13,6 +14,8 @@ static NSString *const kDSPKeyRegenerateFreshInstall = @"regenerateFreshInstall"
 static NSString *const kDSPKeySimulateFreshInstall = @"simulateFreshInstall";
 static NSString *const kDSPKeyDeviceFingerprint = @"deviceFingerprint";
 static NSString *const kDSPKeyStoredDeviceFingerprint = @"storedDeviceFingerprint";
+static NSString *const kDSPKeyModelEpoch = @"modelEpoch";
+static const NSInteger kDSPModelEpoch = 1;
 
 static const char kDSPProductTypeUTF8[] = "iPhone18,3";
 static const char kDSPHardwareModelUTF8[] = "V57AP";
@@ -25,6 +28,45 @@ static BOOL sSimulateFreshInstall = YES;
 static NSUUID *sVendorUUID = nil;
 static NSString *sInstallUUIDString = nil;
 static NSString *sDeviceFingerprintHex = nil;
+static char sRealMachine[32];
+static NSString *sRealMarketingName = nil;
+
+static NSString *DSPMarketingNameForMachine(NSString *machine) {
+    if (machine.length == 0) {
+        return nil;
+    }
+    static NSDictionary<NSString *, NSString *> *names;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        names = @{
+            @"iPhone12,1" : @"iPhone 11",
+            @"iPhone12,3" : @"iPhone 11 Pro",
+            @"iPhone12,5" : @"iPhone 11 Pro Max",
+            @"iPhone13,1" : @"iPhone 12 mini",
+            @"iPhone13,2" : @"iPhone 12",
+            @"iPhone13,3" : @"iPhone 12 Pro",
+            @"iPhone13,4" : @"iPhone 12 Pro Max",
+            @"iPhone14,4" : @"iPhone 13 mini",
+            @"iPhone14,5" : @"iPhone 13",
+            @"iPhone14,2" : @"iPhone 13 Pro",
+            @"iPhone14,3" : @"iPhone 13 Pro Max",
+            @"iPhone14,7" : @"iPhone 14",
+            @"iPhone14,8" : @"iPhone 14 Plus",
+            @"iPhone15,2" : @"iPhone 14 Pro",
+            @"iPhone15,3" : @"iPhone 14 Pro Max",
+            @"iPhone15,4" : @"iPhone 15",
+            @"iPhone15,5" : @"iPhone 15 Plus",
+            @"iPhone16,1" : @"iPhone 15 Pro",
+            @"iPhone16,2" : @"iPhone 15 Pro Max",
+            @"iPhone17,1" : @"iPhone 16 Pro",
+            @"iPhone17,2" : @"iPhone 16 Pro Max",
+            @"iPhone17,3" : @"iPhone 16",
+            @"iPhone17,4" : @"iPhone 16 Plus",
+            @"iPhone17,5" : @"iPhone 16e",
+        };
+    });
+    return names[machine];
+}
 
 static NSUUID *DSPParseUUID(NSString *value) {
     if (value.length == 0) {
@@ -81,6 +123,10 @@ static NSString *DSPFreshDeviceFingerprintHex(void) {
 
     BOOL dirty = NO;
     BOOL regen = [plist[kDSPKeyRegenerateFreshInstall] boolValue] || [plist[kDSPKeyRegenerateVendorId] boolValue];
+    if ([plist[kDSPKeyModelEpoch] integerValue] < kDSPModelEpoch) {
+        regen = YES;
+        plist[kDSPKeyModelEpoch] = @(kDSPModelEpoch);
+    }
     if (regen) {
         [plist removeObjectForKey:kDSPKeyRegenerateFreshInstall];
         [plist removeObjectForKey:kDSPKeyRegenerateVendorId];
@@ -138,6 +184,25 @@ static NSString *DSPFreshDeviceFingerprintHex(void) {
     if (dirty) {
         DSPSavePlist(plist);
     }
+}
+
++ (void)captureRealMachine:(const char *)machine {
+    if (!machine || machine[0] == '\0' || sRealMachine[0] != '\0') {
+        return;
+    }
+    strlcpy(sRealMachine, machine, sizeof(sRealMachine));
+    NSString *machineString = [[NSString alloc] initWithBytes:sRealMachine
+                                                        length:strlen(sRealMachine)
+                                                      encoding:NSUTF8StringEncoding];
+    sRealMarketingName = DSPMarketingNameForMachine(machineString);
+}
+
++ (const char *)realMachineUTF8 {
+    return sRealMachine[0] ? sRealMachine : NULL;
+}
+
++ (NSString *)realMarketingName {
+    return sRealMarketingName;
 }
 
 + (BOOL)isSpoofEnabled {

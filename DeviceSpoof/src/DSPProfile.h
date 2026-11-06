@@ -27,5 +27,8 @@
 + (NSUUID *)spoofedVendorIdentifier;
 + (NSString *)shopeeDeviceFingerprintHex;
 + (void)reloadPreferences;
++ (void)captureRealMachine:(const char *)machine;
++ (const char *)realMachineUTF8;
++ (NSString *)realMarketingName;
 
 @end

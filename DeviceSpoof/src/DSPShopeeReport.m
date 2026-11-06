@@ -1,5 +1,6 @@
 #import "DSPShopeeReport.h"
 #import "DSPProfile.h"
+#import <string.h>
 
 static NSArray<NSString *> *DSPFingerprintKeys(void) {
     return @[ @"devicefingerprint", @"deviceid", @"device_id", @"devid", @"dfp" ];
@@ -79,6 +80,49 @@ static NSArray<NSString *> *DSPOSVersionKeys(void) {
     return [DSPProfile spoofedOSVersion];
 }
 
++ (NSString *)replaceHardwareTokensInString:(NSString *)value {
+    if (value.length == 0 || ![DSPProfile isSpoofEnabled]) {
+        return value;
+    }
+    NSString *result = value;
+    const char *realMachineUTF8 = [DSPProfile realMachineUTF8];
+    if (realMachineUTF8) {
+        NSString *realMachine = [[NSString alloc] initWithBytes:realMachineUTF8
+                                                           length:strlen(realMachineUTF8)
+                                                         encoding:NSUTF8StringEncoding];
+        if (realMachine.length > 0 && [result containsString:realMachine]) {
+            result = [result stringByReplacingOccurrencesOfString:realMachine withString:[self productTypeForReports]];
+        }
+    }
+    NSString *realName = [DSPProfile realMarketingName];
+    if (realName.length > 0) {
+        NSString *appleName = [@"Apple " stringByAppendingString:realName];
+        NSString *spoofAppleName = [self marketingNameForReports];
+        if ([result containsString:appleName]) {
+            result = [result stringByReplacingOccurrencesOfString:appleName withString:spoofAppleName];
+        }
+        if ([result isEqualToString:realName]) {
+            result = [DSPProfile marketingName];
+        }
+    }
+    return result;
+}
+
++ (NSData *)replaceHardwareTokensInData:(NSData *)data {
+    if (data.length == 0 || ![DSPProfile isSpoofEnabled]) {
+        return data;
+    }
+    NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (text.length == 0) {
+        return data;
+    }
+    NSString *replaced = [self replaceHardwareTokensInString:text];
+    if (replaced == text || [replaced isEqualToString:text]) {
+        return data;
+    }
+    return [replaced dataUsingEncoding:NSUTF8StringEncoding] ?: data;
+}
+
 + (id)rewritePayloadIfNeeded:(id)object {
     if (![DSPProfile isSpoofEnabled]) {
         return object;
@@ -132,6 +176,10 @@ static NSArray<NSString *> *DSPOSVersionKeys(void) {
             [out addObject:[self rewriteNode:item depth:depth + 1] ?: [NSNull null]];
         }
         return out;
+    }
+
+    if ([node isKindOfClass:[NSString class]]) {
+        return [self replaceHardwareTokensInString:(NSString *)node];
     }
 
     return node;

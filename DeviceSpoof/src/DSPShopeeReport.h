@@ -16,4 +16,8 @@
 /// 深拷贝并改写上报 JSON 里的设备字段（仅字段名匹配，不碰 token/phone）。
 + (id)rewritePayloadIfNeeded:(id)object;
 
+/// 把真机标识（如 iPhone13,2）和对应的 “Apple iPhone 12” 换成伪装机型。
++ (NSString *)replaceHardwareTokensInString:(NSString *)value;
++ (NSData *)replaceHardwareTokensInData:(NSData *)data;
+
 @end

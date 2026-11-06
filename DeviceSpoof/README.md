@@ -2,6 +2,14 @@
 
 仅在 **台湾虾皮** 进程内生效。目标：在不重刷 iOS 的前提下，尽量模拟 **「刷机后首次安装虾皮」** 时客户端会上报的安装实例 ID，而不是只改序列号。
 
+## 1.2.12
+
+登录后装置管理仍显示「Apple iPhone 12」，是因为虾皮上报的还是真机标识 `iPhone13,2`，服务端照这个显示；同一条设备记录也只更新登录时间，不改已经记下的机型名。
+
+1.2.12 会在挂钩之前先记下真机标识，再把上报字符串和请求体里的 `iPhone13,2` / `Apple iPhone 12` 换成 iPhone 17。同时把设备指纹轮换一次，让服务器记成一台新设备。屏幕尺寸改为 iPhone 17 的 393×852，而且不再在 `UIScreen` 回调里调用 `mainScreen`，避免以前那种递归崩溃。
+
+装上后彻底划掉虾皮，退出账号再登录。列表里旧的 iPhone 12 可以还在，当前这台应变成 iPhone 17。
+
 ## 1.2.11
 
 1.2.10 安装失败：`unable to open '/var/jb/usr/lib/TweakInject/DeviceSpoof.dylib.dpkg-new'`。包里同时放了 `DynamicLibraries` 和 `TweakInject` 两份，而这台手机上 `TweakInject` 不存在（多巴胺上它经常是一个还没建好的符号链接），dpkg 就解不开。

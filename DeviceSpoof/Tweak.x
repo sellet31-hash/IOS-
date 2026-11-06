@@ -9,6 +9,7 @@
 #import <mach/mach.h>
 #import <errno.h>
 #import <string.h>
+#import <sys/syscall.h>
 #import <sys/sysctl.h>
 #import <sys/utsname.h>
 #import <unistd.h>
@@ -33,15 +34,18 @@ static int (*orig_sysctl)(int *, unsigned int, void *, size_t *, void *, size_t)
 static int (*orig_uname)(struct utsname *);
 static void *(*orig_dlsym)(void *, const char *);
 static OSStatus (*orig_SecItemCopyMatching)(CFDictionaryRef, CFTypeRef *);
+static int (*orig_syscall)(int, long, long, long, long, long, long);
 static void *gDSPTargetMGCopyAnswer;
 static void *gDSPTargetSysctlbyname;
 static void *gDSPTargetSysctl;
 static void *gDSPTargetUname;
 static void *gDSPTargetDlsym;
 static void *gDSPTargetSecItem;
+static void *gDSPTargetSyscall;
 static __thread int gDSPSysctlbynameDepth;
 static __thread int gDSPSysctlDepth;
 static __thread int gDSPUnameDepth;
+static __thread int gDSPStringHookDepth;
 
 static CFStringRef kDSPProductTypeKey;
 static CFStringRef kDSPHardwareModelKey;
@@ -66,12 +70,12 @@ static const char *kDSPMachineUTF8;
 static const char *kDSPModelUTF8;
 static const char *kDSPIOSVersionUTF8;
 static unsigned int gDSPBindCount = 0;
-static DSPBind gDSPBinds[6];
+static DSPBind gDSPBinds[8];
 static BOOL gDSPAnswersReady = NO;
 
 static void DSPWriteLoadMarker(void) {
     NSDictionary *info = @{
-        @"version" : @"1.2.11",
+        @"version" : @"1.2.12",
         @"bundle" : [[NSBundle mainBundle] bundleIdentifier] ?: @"",
         @"productType" : [DSPProfile productType],
         @"marketingName" : [DSPProfile marketingName],
@@ -278,6 +282,39 @@ static int DSP_sysctl(int *name, unsigned int namelen, void *oldp, size_t *oldle
     return result;
 }
 
+static int DSP_syscall(int number, long arg1, long arg2, long arg3, long arg4, long arg5, long arg6) {
+    int result = orig_syscall ? orig_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6) : -1;
+#ifndef SYS_sysctl
+#define SYS_sysctl 202
+#endif
+    if (number != SYS_sysctl || result != 0 || arg1 == 0 || arg3 == 0 || arg4 == 0) {
+        return result;
+    }
+    int *name = (int *)(uintptr_t)arg1;
+    unsigned int namelen = (unsigned int)arg2;
+    void *oldp = (void *)(uintptr_t)arg3;
+    size_t *oldlenp = (size_t *)(uintptr_t)arg4;
+    if (!name || namelen < 2 || name[0] != CTL_HW) {
+        return result;
+    }
+    const char *spoof = NULL;
+    if (name[1] == HW_MACHINE && kDSPMachineUTF8) {
+        spoof = kDSPMachineUTF8;
+    } else if (name[1] == HW_MODEL && kDSPModelUTF8) {
+        spoof = kDSPModelUTF8;
+    }
+    if (!spoof) {
+        return result;
+    }
+    size_t need = strlen(spoof) + 1;
+    if (*oldlenp < need) {
+        return result;
+    }
+    memcpy(oldp, spoof, need);
+    *oldlenp = need;
+    return result;
+}
+
 static int DSP_uname(struct utsname *buffer) {
     if (!orig_uname) {
         errno = ENOSYS;
@@ -409,6 +446,9 @@ static void DSPRebuildBindTable(void) {
     if (gDSPTargetSecItem && orig_SecItemCopyMatching) {
         gDSPBinds[gDSPBindCount++] = (DSPBind){gDSPTargetSecItem, (void *)DSP_SecItemCopyMatching};
     }
+    if (gDSPTargetSyscall && orig_syscall) {
+        gDSPBinds[gDSPBindCount++] = (DSPBind){gDSPTargetSyscall, (void *)DSP_syscall};
+    }
 }
 
 static void DSPRebindOneImage(const struct mach_header *header, intptr_t slide, const char *name) {
@@ -509,6 +549,54 @@ static void DSPPrepareAnswers(void) {
     return %orig;
 }
 
+- (NSString *)machineModel {
+    DSPEnsureReady();
+    if ([DSPProfile isSpoofEnabled]) {
+        return [DSPProfile productType];
+    }
+    return %orig;
+}
+
+- (NSString *)machineModelName {
+    DSPEnsureReady();
+    if ([DSPProfile isSpoofEnabled]) {
+        return [DSPProfile marketingName];
+    }
+    return %orig;
+}
+
+%end
+
+%hook UIScreen
+
+- (CGRect)bounds {
+    if ([DSPProfile isSpoofEnabled]) {
+        return [DSPProfile screenBounds];
+    }
+    return %orig;
+}
+
+- (CGRect)nativeBounds {
+    if ([DSPProfile isSpoofEnabled]) {
+        return [DSPProfile nativeScreenBounds];
+    }
+    return %orig;
+}
+
+- (CGFloat)scale {
+    if ([DSPProfile isSpoofEnabled]) {
+        return [DSPProfile screenScale];
+    }
+    return %orig;
+}
+
+- (CGFloat)nativeScale {
+    if ([DSPProfile isSpoofEnabled]) {
+        return [DSPProfile screenScale];
+    }
+    return %orig;
+}
+
 %end
 
 %hook NSProcessInfo
@@ -563,7 +651,7 @@ static void DSPPrepareAnswers(void) {
     }
     if ([DSPShopeeReport isDeviceModelKey:defaultName] && [value isKindOfClass:[NSString class]]) {
         NSString *stringValue = (NSString *)value;
-        if ([stringValue hasPrefix:@"iPhone"]) {
+        if ([stringValue containsString:@"iPhone"] || [stringValue containsString:@"iPad"]) {
             return [DSPShopeeReport productTypeForReports];
         }
     }
@@ -590,6 +678,47 @@ static void DSPPrepareAnswers(void) {
 
 %end
 
+%hook NSMutableURLRequest
+
+- (void)setHTTPBody:(NSData *)HTTPBody {
+    if ([DSPProfile isSpoofEnabled] && HTTPBody.length > 0) {
+        NSData *replaced = [DSPShopeeReport replaceHardwareTokensInData:HTTPBody];
+        %orig(replaced ?: HTTPBody);
+        return;
+    }
+    %orig;
+}
+
+%end
+
+%hook NSString
+
++ (instancetype)stringWithUTF8String:(const char *)bytes {
+    const char *realMachine = [DSPProfile realMachineUTF8];
+    if (gDSPStringHookDepth > 0 || ![DSPProfile isSpoofEnabled] || !bytes || !realMachine || !strstr(bytes, realMachine)) {
+        return %orig;
+    }
+    gDSPStringHookDepth++;
+    NSString *value = %orig;
+    NSString *replaced = value ? [DSPShopeeReport replaceHardwareTokensInString:value] : value;
+    gDSPStringHookDepth--;
+    return replaced ?: value;
+}
+
++ (instancetype)stringWithCString:(const char *)bytes encoding:(NSStringEncoding)encoding {
+    const char *realMachine = [DSPProfile realMachineUTF8];
+    if (gDSPStringHookDepth > 0 || ![DSPProfile isSpoofEnabled] || !bytes || !realMachine || !strstr(bytes, realMachine)) {
+        return %orig;
+    }
+    gDSPStringHookDepth++;
+    NSString *value = %orig;
+    NSString *replaced = value ? [DSPShopeeReport replaceHardwareTokensInString:value] : value;
+    gDSPStringHookDepth--;
+    return replaced ?: value;
+}
+
+%end
+
 static BOOL DSPHookLinked(void *symbol, void *replacement, void **original) {
     if (!symbol || !replacement || !original) {
         return NO;
@@ -600,11 +729,18 @@ static BOOL DSPHookLinked(void *symbol, void *replacement, void **original) {
 }
 
 static void DSPInstallInlineHooks(void) {
+    char realMachine[32] = {0};
+    size_t realMachineLength = sizeof(realMachine);
+    if (sysctlbyname("hw.machine", realMachine, &realMachineLength, NULL, 0) == 0) {
+        [DSPProfile captureRealMachine:realMachine];
+    }
+
     gDSPTargetSysctlbyname = (void *)sysctlbyname;
     gDSPTargetSysctl = (void *)sysctl;
     gDSPTargetUname = (void *)uname;
     gDSPTargetDlsym = (void *)dlsym;
     gDSPTargetSecItem = (void *)SecItemCopyMatching;
+    gDSPTargetSyscall = (void *)syscall;
     orig_dlsym = (void *(*)(void *, const char *))dlsym;
 
     void *gestalt = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
@@ -623,6 +759,7 @@ static void DSPInstallInlineHooks(void) {
     DSPHookLinked(gDSPTargetUname, (void *)DSP_uname, (void **)&orig_uname);
     DSPHookLinked(gDSPTargetSecItem, (void *)DSP_SecItemCopyMatching, (void **)&orig_SecItemCopyMatching);
     DSPHookLinked(gDSPTargetMGCopyAnswer, (void *)DSP_MGCopyAnswer, (void **)&orig_MGCopyAnswer);
+    DSPHookLinked(gDSPTargetSyscall, (void *)DSP_syscall, (void **)&orig_syscall);
 }
 
 %ctor {
