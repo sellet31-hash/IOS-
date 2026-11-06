@@ -952,7 +952,7 @@ static void DSPRebindChainedFixups(const struct mach_header *header, const char 
         memcpy(&pointerFormat, blob + absolute + 6, sizeof(pointerFormat));
         memcpy(&segmentOffset, blob + absolute + 8, sizeof(segmentOffset));
         memcpy(&pageCount, blob + absolute + 20, sizeof(pageCount));
-        if (pageSize < sizeof(uint64_t) || pageCount > 100000 || infoSize < 22u + (uint32_t)pageCount * sizeof(uint16_t) || absolute + infoSize > fixupSize) {
+        if (pageSize < sizeof(uint64_t) || infoSize < 22u + (uint32_t)pageCount * sizeof(uint16_t) || absolute + infoSize > fixupSize) {
             continue;
         }
         struct segment_command_64 segment;
