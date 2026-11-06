@@ -2,6 +2,7 @@
 #import "ABAppListViewController.h"
 #import "ABBackupListViewController.h"
 #import "ABDeviceViewController.h"
+#import "ABTweakInstaller.h"
 #import "ABChrome.h"
 #import "ABIcon.h"
 
@@ -31,6 +32,9 @@
     tabs.viewControllers = @[appsNavigation, backupsNavigation, deviceNavigation];
     self.window.rootViewController = tabs;
     [self.window makeKeyAndVisible];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [ABTweakInstaller presentInstallerFromViewController:tabs userInitiated:NO];
+    });
     return YES;
 }
 

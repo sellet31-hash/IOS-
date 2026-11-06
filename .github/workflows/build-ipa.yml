@@ -9,6 +9,7 @@ on:
     paths:
       - 'src/**'
       - 'Resources/**'
+      - 'DeviceSpoof/**'
       - 'entitlements.plist'
       - 'Makefile'
       - 'control'

@@ -1,6 +1,7 @@
 #import "ABDeviceViewController.h"
 #import "ABDeviceCatalog.h"
 #import "ABDeviceStore.h"
+#import "ABTweakInstaller.h"
 #import "ABChrome.h"
 #import "ABIcon.h"
 
@@ -27,6 +28,11 @@
     self.generations = [ABDeviceCatalog generations];
     [self reloadSelection];
     [self buildHeader];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(reloadSelection) name:ABTweakInstallerDidChangeNotification object:nil];
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 - (void)reloadSelection {
@@ -119,7 +125,13 @@
     ABDeviceModel *model = self.selected;
     self.headerTitle.text = self.enabled ? (model.name ?: @"未选择") : @"伪装已关闭";
     self.headerDetail.text = model ? [NSString stringWithFormat:@"%@ · %@", model.identifier, model.board] : @"";
-    self.headerMeta.text = self.enabled ? @"重新打开目标 App 后生效" : @"目标 App 会看到这台手机的真实机型";
+    if (![ABTweakInstaller isInstalled]) {
+        self.headerMeta.text = @"伪装插件未安装，机型不会生效";
+    } else if (self.enabled) {
+        self.headerMeta.text = @"重新打开目标 App 后生效";
+    } else {
+        self.headerMeta.text = @"目标 App 会看到这台手机的真实机型";
+    }
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
@@ -127,7 +139,10 @@
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    if (section < 2) {
+    if (section == 0) {
+        return 2;
+    }
+    if (section == 1) {
         return 1;
     }
     return [ABDeviceCatalog modelsInGeneration:self.generations[section - 2]].count;
@@ -145,7 +160,7 @@
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == 0) {
-        return @"机型设置写入 DeviceSpoof。系统版本仍使用这台手机的真实版本，避免目标 App 打开后退出。";
+        return @"伪装插件随应用备份写入注入目录。系统版本仍使用这台手机的真实版本，避免目标 App 打开后退出。";
     }
     if (section == 1) {
         return @"下一次打开目标 App 时更换 IDFV、安装 UUID 和 32 位设备指纹。已经登录的账号不会因此变成新账号。";
@@ -154,7 +169,7 @@
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    if (indexPath.section == 0) {
+    if (indexPath.section == 0 && indexPath.row == 0) {
         UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"switch"];
         if (!cell) {
             cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"switch"];
@@ -165,6 +180,20 @@
         }
         cell.textLabel.text = @"启用机型伪装";
         [(UISwitch *)cell.accessoryView setOn:self.enabled animated:NO];
+        return cell;
+    }
+    if (indexPath.section == 0) {
+        UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"plugin"];
+        if (!cell) {
+            cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"plugin"];
+        }
+        UIListContentConfiguration *config = [UIListContentConfiguration subtitleCellConfiguration];
+        config.text = @"伪装插件";
+        config.secondaryText = [ABTweakInstaller statusText];
+        config.image = [UIImage systemImageNamed:[ABTweakInstaller isInstalled] ? @"checkmark.circle" : @"shippingbox"];
+        config.imageProperties.tintColor = ABAccentColor();
+        cell.contentConfiguration = config;
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         return cell;
     }
     if (indexPath.section == 1) {
@@ -211,6 +240,12 @@
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.section == 0) {
+        if (indexPath.row == 1) {
+            [ABTweakInstaller presentInstallerFromViewController:self userInitiated:YES];
+        }
+        return;
+    }
     if (indexPath.section == 1) {
         NSError *error = nil;
         BOOL saved = [ABDeviceStore requestFreshIdentity:&error];

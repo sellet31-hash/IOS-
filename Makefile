@@ -23,6 +23,7 @@ AppBackup_FILES := \
 	src/ABDeviceCatalog.m \
 	src/ABDeviceStore.m \
 	src/ABDeviceViewController.m \
+	src/ABTweakInstaller.m \
 	src/abtar.c
 
 AppBackup_FRAMEWORKS := UIKit CoreGraphics QuartzCore
@@ -33,4 +34,5 @@ AppBackup_INSTALL_PATH := /Applications
 include $(THEOS_MAKE_PATH)/application.mk
 
 after-stage::
+	THEOS="$(THEOS)" THEOS_STAGING_DIR="$(THEOS_STAGING_DIR)" bash scripts/embed-devicespoof.sh
 	THEOS_STAGING_DIR="$(THEOS_STAGING_DIR)" bash scripts/make-ipa.sh
