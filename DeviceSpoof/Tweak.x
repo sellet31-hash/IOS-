@@ -35,6 +35,7 @@ static int (*orig_uname)(struct utsname *);
 static void *(*orig_dlsym)(void *, const char *);
 static OSStatus (*orig_SecItemCopyMatching)(CFDictionaryRef, CFTypeRef *);
 static int (*orig_syscall)(int, long, long, long, long, long, long);
+static const void *(*orig_CFDictionaryGetValue)(CFDictionaryRef, const void *);
 static void *gDSPTargetMGCopyAnswer;
 static void *gDSPTargetSysctlbyname;
 static void *gDSPTargetSysctl;
@@ -42,6 +43,7 @@ static void *gDSPTargetUname;
 static void *gDSPTargetDlsym;
 static void *gDSPTargetSecItem;
 static void *gDSPTargetSyscall;
+static void *gDSPTargetCFDictionaryGetValue;
 static __thread int gDSPSysctlbynameDepth;
 static __thread int gDSPSysctlDepth;
 static __thread int gDSPUnameDepth;
@@ -70,12 +72,12 @@ static const char *kDSPMachineUTF8;
 static const char *kDSPModelUTF8;
 static const char *kDSPIOSVersionUTF8;
 static unsigned int gDSPBindCount = 0;
-static DSPBind gDSPBinds[8];
+static DSPBind gDSPBinds[10];
 static BOOL gDSPAnswersReady = NO;
 
 static void DSPWriteLoadMarker(void) {
     NSDictionary *info = @{
-        @"version" : @"1.2.12",
+        @"version" : @"1.2.13",
         @"bundle" : [[NSBundle mainBundle] bundleIdentifier] ?: @"",
         @"productType" : [DSPProfile productType],
         @"marketingName" : [DSPProfile marketingName],
@@ -315,6 +317,46 @@ static int DSP_syscall(int number, long arg1, long arg2, long arg3, long arg4, l
     return result;
 }
 
+static BOOL DSPCStringIsMachineID(const char *text) {
+    const char *comma;
+    if (!text || strncmp(text, "iPhone", 6) != 0) {
+        return NO;
+    }
+    comma = strchr(text, ',');
+    return comma != NULL && comma[1] >= '0' && comma[1] <= '9';
+}
+
+static const void *DSP_CFDictionaryGetValue(CFDictionaryRef theDict, const void *key) {
+    const void *value = orig_CFDictionaryGetValue ? orig_CFDictionaryGetValue(theDict, key) : NULL;
+    char keyBuf[24];
+    char valueBuf[80];
+    if (!value || !key || ![DSPProfile isSpoofEnabled]) {
+        return value;
+    }
+    if (CFGetTypeID((CFTypeRef)key) != CFStringGetTypeID() || CFGetTypeID((CFTypeRef)value) != CFStringGetTypeID()) {
+        return value;
+    }
+    if (!CFStringGetCString((CFStringRef)key, keyBuf, (CFIndex)sizeof(keyBuf), kCFStringEncodingASCII)) {
+        return value;
+    }
+    if (!DSPCStringIsMachineID(keyBuf)) {
+        return value;
+    }
+    if (!CFStringGetCString((CFStringRef)value, valueBuf, (CFIndex)sizeof(valueBuf), kCFStringEncodingUTF8)) {
+        return value;
+    }
+    if (!strstr(valueBuf, "iPhone") && !strstr(valueBuf, "iPad")) {
+        return value;
+    }
+    if (strstr(valueBuf, "Apple") != NULL) {
+        return (__bridge const void *)@"Apple iPhone 17";
+    }
+    if (strchr(valueBuf, ',') != NULL) {
+        return (__bridge const void *)@"iPhone18,3";
+    }
+    return (__bridge const void *)@"iPhone 17";
+}
+
 static int DSP_uname(struct utsname *buffer) {
     if (!orig_uname) {
         errno = ENOSYS;
@@ -448,6 +490,9 @@ static void DSPRebuildBindTable(void) {
     }
     if (gDSPTargetSyscall && orig_syscall) {
         gDSPBinds[gDSPBindCount++] = (DSPBind){gDSPTargetSyscall, (void *)DSP_syscall};
+    }
+    if (gDSPTargetCFDictionaryGetValue && orig_CFDictionaryGetValue) {
+        gDSPBinds[gDSPBindCount++] = (DSPBind){gDSPTargetCFDictionaryGetValue, (void *)DSP_CFDictionaryGetValue};
     }
 }
 
@@ -661,7 +706,20 @@ static void DSPPrepareAnswers(void) {
     if ([DSPShopeeReport isMarketingNameKey:defaultName]) {
         return [DSPShopeeReport marketingNameForReports];
     }
+    if ([value isKindOfClass:[NSString class]]) {
+        NSString *replaced = [DSPShopeeReport replaceHardwareTokensInString:(NSString *)value];
+        if (replaced.length > 0 && ![replaced isEqualToString:(NSString *)value]) {
+            return replaced;
+        }
+    }
     return value;
+}
+
+- (void)setObject:(id)value forKey:(NSString *)defaultName {
+    if ([DSPProfile isSpoofEnabled] && [value isKindOfClass:[NSString class]]) {
+        value = [DSPShopeeReport replaceHardwareTokensInString:(NSString *)value];
+    }
+    %orig;
 }
 
 %end
@@ -760,6 +818,8 @@ static void DSPInstallInlineHooks(void) {
     DSPHookLinked(gDSPTargetSecItem, (void *)DSP_SecItemCopyMatching, (void **)&orig_SecItemCopyMatching);
     DSPHookLinked(gDSPTargetMGCopyAnswer, (void *)DSP_MGCopyAnswer, (void **)&orig_MGCopyAnswer);
     DSPHookLinked(gDSPTargetSyscall, (void *)DSP_syscall, (void **)&orig_syscall);
+    gDSPTargetCFDictionaryGetValue = (void *)CFDictionaryGetValue;
+    DSPHookLinked(gDSPTargetCFDictionaryGetValue, (void *)DSP_CFDictionaryGetValue, (void **)&orig_CFDictionaryGetValue);
 }
 
 %ctor {

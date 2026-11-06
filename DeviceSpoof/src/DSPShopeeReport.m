@@ -101,6 +101,11 @@ static NSArray<NSString *> *DSPOSVersionKeys(void) {
         if ([result containsString:appleName]) {
             result = [result stringByReplacingOccurrencesOfString:appleName withString:spoofAppleName];
         }
+        NSString *quotedReal = [NSString stringWithFormat:@"\"%@\"", realName];
+        NSString *quotedSpoof = [NSString stringWithFormat:@"\"%@\"", [DSPProfile marketingName]];
+        if ([result containsString:quotedReal]) {
+            result = [result stringByReplacingOccurrencesOfString:quotedReal withString:quotedSpoof];
+        }
         if ([result isEqualToString:realName]) {
             result = [DSPProfile marketingName];
         }

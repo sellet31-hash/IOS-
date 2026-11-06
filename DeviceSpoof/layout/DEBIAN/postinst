@@ -6,18 +6,16 @@ if [ ! -f "$src/DeviceSpoof.dylib" ]; then
 	exit 0
 fi
 
+# A working symlink already exposes DynamicLibraries. A missing or broken
+# TweakInject is why ElleKit never loads the tweak, so the model stays real.
+if [ -L "$inject" ] && [ -d "$inject" ]; then
+	exit 0
+fi
+
 if [ -L "$inject" ]; then
-	exit 0
+	rm -f "$inject"
 fi
 
-if [ ! -e "$inject" ]; then
-	mkdir -p /var/jb/usr/lib
-	ln -s "$src" "$inject"
-	exit 0
-fi
-
-if [ -d "$inject" ]; then
-	cp -f "$src/DeviceSpoof.dylib" "$src/DeviceSpoof.plist" "$inject/"
-fi
-
+mkdir -p "$inject"
+cp -f "$src/DeviceSpoof.dylib" "$src/DeviceSpoof.plist" "$inject/"
 exit 0
