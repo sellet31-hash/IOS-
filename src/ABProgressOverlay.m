@@ -33,8 +33,8 @@
         self.backgroundColor = [UIColor colorWithWhite:0 alpha:0.42];
         UIView *card = [UIView new];
         card.translatesAutoresizingMaskIntoConstraints = NO;
-        card.backgroundColor = UIColor.secondarySystemGroupedBackgroundColor;
-        card.layer.cornerRadius = 18;
+        card.backgroundColor = UIColor.systemBackgroundColor;
+        card.layer.cornerRadius = 22;
         card.layer.cornerCurve = kCACornerCurveContinuous;
         card.layer.shadowColor = UIColor.blackColor.CGColor;
         card.layer.shadowOpacity = 0.18;
@@ -45,7 +45,8 @@
 
         UILabel *title = [UILabel new];
         title.translatesAutoresizingMaskIntoConstraints = NO;
-        title.font = [UIFont systemFontOfSize:18 weight:UIFontWeightSemibold];
+        title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+        title.textAlignment = NSTextAlignmentCenter;
         title.textColor = UIColor.labelColor;
         [card addSubview:title];
         self.titleLabel = title;

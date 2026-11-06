@@ -2,6 +2,7 @@
 #import "ABAppLibrary.h"
 #import "ABBackupActions.h"
 #import "ABBackupEngine.h"
+#import "ABChrome.h"
 #import "ABIcon.h"
 #import <QuartzCore/QuartzCore.h>
 
@@ -43,7 +44,7 @@
     UIView *header = [UIView new];
     UIImageView *icon = [UIImageView new];
     icon.translatesAutoresizingMaskIntoConstraints = NO;
-    icon.layer.cornerRadius = 14;
+    icon.layer.cornerRadius = 18;
     icon.layer.cornerCurve = kCACornerCurveContinuous;
     icon.clipsToBounds = YES;
     icon.contentMode = UIViewContentModeScaleAspectFill;
@@ -53,7 +54,8 @@
 
     UILabel *name = [UILabel new];
     name.translatesAutoresizingMaskIntoConstraints = NO;
-    name.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
+    name.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle2];
+    name.textAlignment = NSTextAlignmentCenter;
     name.numberOfLines = 2;
     name.textColor = UIColor.labelColor;
     [header addSubview:name];
@@ -63,6 +65,7 @@
     version.translatesAutoresizingMaskIntoConstraints = NO;
     version.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
     version.textColor = UIColor.secondaryLabelColor;
+    version.textAlignment = NSTextAlignmentCenter;
     [header addSubview:version];
     self.versionLabel = version;
 
@@ -70,46 +73,37 @@
     bundle.translatesAutoresizingMaskIntoConstraints = NO;
     bundle.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
     bundle.textColor = UIColor.tertiaryLabelColor;
+    bundle.textAlignment = NSTextAlignmentCenter;
     bundle.lineBreakMode = NSLineBreakByTruncatingMiddle;
     [header addSubview:bundle];
     self.bundleLabel = bundle;
 
-    UILabel *path = [UILabel new];
-    path.translatesAutoresizingMaskIntoConstraints = NO;
-    path.font = [UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightRegular];
-    path.textColor = UIColor.secondaryLabelColor;
-    path.numberOfLines = 0;
-    [header addSubview:path];
-    self.pathLabel = path;
+    self.pathLabel = [UILabel new];
 
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
     button.translatesAutoresizingMaskIntoConstraints = NO;
     [button setTitle:@"复制数据路径" forState:UIControlStateNormal];
-    button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+    button.titleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
     [button addTarget:self action:@selector(pasteContainerPath) forControlEvents:UIControlEventTouchUpInside];
     [header addSubview:button];
     self.pathButton = button;
 
     [NSLayoutConstraint activateConstraints:@[
-        [icon.topAnchor constraintEqualToAnchor:header.topAnchor constant:8],
-        [icon.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:20],
-        [icon.widthAnchor constraintEqualToConstant:64],
-        [icon.heightAnchor constraintEqualToConstant:64],
-        [name.leadingAnchor constraintEqualToAnchor:icon.trailingAnchor constant:14],
-        [name.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-20],
-        [name.topAnchor constraintEqualToAnchor:icon.topAnchor constant:2],
+        [icon.topAnchor constraintEqualToAnchor:header.topAnchor constant:12],
+        [icon.centerXAnchor constraintEqualToAnchor:header.centerXAnchor],
+        [icon.widthAnchor constraintEqualToConstant:76],
+        [icon.heightAnchor constraintEqualToConstant:76],
+        [name.topAnchor constraintEqualToAnchor:icon.bottomAnchor constant:12],
+        [name.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:24],
+        [name.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-24],
+        [version.topAnchor constraintEqualToAnchor:name.bottomAnchor constant:4],
         [version.leadingAnchor constraintEqualToAnchor:name.leadingAnchor],
         [version.trailingAnchor constraintEqualToAnchor:name.trailingAnchor],
-        [version.topAnchor constraintEqualToAnchor:name.bottomAnchor constant:4],
+        [bundle.topAnchor constraintEqualToAnchor:version.bottomAnchor constant:2],
         [bundle.leadingAnchor constraintEqualToAnchor:name.leadingAnchor],
         [bundle.trailingAnchor constraintEqualToAnchor:name.trailingAnchor],
-        [bundle.topAnchor constraintEqualToAnchor:version.bottomAnchor constant:2],
-        [path.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:20],
-        [path.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-20],
-        [path.topAnchor constraintGreaterThanOrEqualToAnchor:icon.bottomAnchor constant:16],
-        [path.topAnchor constraintGreaterThanOrEqualToAnchor:bundle.bottomAnchor constant:16],
-        [button.leadingAnchor constraintEqualToAnchor:path.leadingAnchor],
-        [button.topAnchor constraintEqualToAnchor:path.bottomAnchor constant:4],
+        [button.topAnchor constraintEqualToAnchor:bundle.bottomAnchor constant:8],
+        [button.centerXAnchor constraintEqualToAnchor:header.centerXAnchor],
         [button.bottomAnchor constraintEqualToAnchor:header.bottomAnchor constant:-8]
     ]];
     self.tableView.tableHeaderView = header;
@@ -307,6 +301,7 @@
     config.secondaryTextProperties.color = current ? ABAccentColor() : UIColor.secondaryLabelColor;
     config.secondaryTextProperties.numberOfLines = 2;
     cell.contentConfiguration = config;
+    cell.backgroundConfiguration = current ? ABHighlightedCellBackground() : [UIBackgroundConfiguration listGroupedCellConfiguration];
     cell.accessoryType = current ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryDisclosureIndicator;
     cell.tintColor = ABAccentColor();
     cell.selectionStyle = UITableViewCellSelectionStyleDefault;

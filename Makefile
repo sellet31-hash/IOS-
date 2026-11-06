@@ -11,6 +11,7 @@ AppBackup_FILES := \
 	src/ABAppDelegate.m \
 	src/ABModels.m \
 	src/ABIcon.m \
+	src/ABChrome.m \
 	src/ABAppLibrary.m \
 	src/ABTarArchive.m \
 	src/ABBackupEngine.m \

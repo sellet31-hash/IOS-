@@ -1,6 +1,7 @@
 #import "ABAppListViewController.h"
 #import "ABAppDetailViewController.h"
 #import "ABAppLibrary.h"
+#import "ABChrome.h"
 #import "ABIcon.h"
 
 @interface ABAppListViewController () <UISearchResultsUpdating>
@@ -10,6 +11,7 @@
 @property (nonatomic) BOOL loaded;
 @property (nonatomic, strong) UISearchController *searchController;
 @property (nonatomic, strong) dispatch_queue_t loadQueue;
+@property (nonatomic, strong) UILabel *overviewLabel;
 @end
 
 @implementation ABAppListViewController
@@ -35,7 +37,50 @@
     self.refreshControl = [UIRefreshControl new];
     [self.refreshControl addTarget:self action:@selector(reloadApps) forControlEvents:UIControlEventValueChanged];
     self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
+    [self buildOverview];
     [self reloadApps];
+}
+
+- (void)buildOverview {
+    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, 92)];
+    UIView *card = [UIView new];
+    card.translatesAutoresizingMaskIntoConstraints = NO;
+    card.backgroundColor = UIColor.secondarySystemGroupedBackgroundColor;
+    card.layer.cornerRadius = 16;
+    card.layer.cornerCurve = kCACornerCurveContinuous;
+    UIImageView *icon = [[UIImageView alloc] initWithImage:ABSymbolImage(@"square.grid.2x2.fill")];
+    icon.translatesAutoresizingMaskIntoConstraints = NO;
+    icon.tintColor = ABAccentColor();
+    UILabel *title = [UILabel new];
+    title.translatesAutoresizingMaskIntoConstraints = NO;
+    title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+    title.text = @"应用库";
+    UILabel *detail = [UILabel new];
+    detail.translatesAutoresizingMaskIntoConstraints = NO;
+    detail.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+    detail.textColor = UIColor.secondaryLabelColor;
+    detail.text = @"正在读取";
+    self.overviewLabel = detail;
+    [card addSubview:icon];
+    [card addSubview:title];
+    [card addSubview:detail];
+    [header addSubview:card];
+    [NSLayoutConstraint activateConstraints:@[
+        [card.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:20],
+        [card.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-20],
+        [card.topAnchor constraintEqualToAnchor:header.topAnchor constant:4],
+        [card.bottomAnchor constraintEqualToAnchor:header.bottomAnchor constant:-8],
+        [icon.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
+        [icon.centerYAnchor constraintEqualToAnchor:card.centerYAnchor],
+        [title.leadingAnchor constraintEqualToAnchor:icon.trailingAnchor constant:12],
+        [title.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
+        [title.topAnchor constraintEqualToAnchor:card.topAnchor constant:16],
+        [detail.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],
+        [detail.trailingAnchor constraintEqualToAnchor:title.trailingAnchor],
+        [detail.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:2],
+        [detail.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-16],
+    ]];
+    self.tableView.tableHeaderView = header;
 }
 
 - (NSArray<ABAppInfo *> *)visibleApps {
@@ -63,6 +108,7 @@
             self.accessDenied = denied;
             self.loaded = YES;
             [self.refreshControl endRefreshing];
+            self.overviewLabel.text = denied ? @"无法读取其他应用" : [NSString stringWithFormat:@"%lu 个已安装的应用", (unsigned long)apps.count];
             [self.tableView reloadData];
             [self updateEmptyState];
         });
@@ -116,9 +162,9 @@
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"app"];
     }
     UIListContentConfiguration *config = [UIListContentConfiguration subtitleCellConfiguration];
-    config.imageProperties.maximumSize = CGSizeMake(40, 40);
-    config.imageProperties.reservedLayoutSize = CGSizeMake(40, 40);
-    config.imageProperties.cornerRadius = 8;
+    config.imageProperties.maximumSize = CGSizeMake(44, 44);
+    config.imageProperties.reservedLayoutSize = CGSizeMake(44, 44);
+    config.imageProperties.cornerRadius = 10;
     cell.accessoryView = nil;
     if (!self.loaded) {
         config.text = @"正在读取已安装的应用";

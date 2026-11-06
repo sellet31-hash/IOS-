@@ -2,6 +2,7 @@
 #import "ABAppLibrary.h"
 #import "ABBackupActions.h"
 #import "ABBackupEngine.h"
+#import "ABChrome.h"
 #import "ABIcon.h"
 #import <QuartzCore/QuartzCore.h>
 
@@ -175,6 +176,7 @@
     config.imageProperties.maximumSize = CGSizeMake(28, 28);
     config.imageProperties.cornerRadius = 6;
     cell.contentConfiguration = config;
+    cell.backgroundConfiguration = current ? ABHighlightedCellBackground() : [UIBackgroundConfiguration listGroupedCellConfiguration];
     cell.accessoryType = current ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
     cell.tintColor = ABAccentColor();
     cell.selectionStyle = UITableViewCellSelectionStyleDefault;

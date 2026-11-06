@@ -2,16 +2,15 @@
 #import "ABAppListViewController.h"
 #import "ABBackupListViewController.h"
 #import "ABDeviceViewController.h"
+#import "ABChrome.h"
 #import "ABIcon.h"
 
 @implementation ABAppDelegate
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
     self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+    ABInstallAppearance();
     self.window.tintColor = ABAccentColor();
-    UINavigationBar.appearance.tintColor = ABAccentColor();
-    UITabBar.appearance.tintColor = ABAccentColor();
-    UISwitch.appearance.onTintColor = ABAccentColor();
 
     ABAppListViewController *apps = [ABAppListViewController new];
     UINavigationController *appsNavigation = [[UINavigationController alloc] initWithRootViewController:apps];
@@ -27,11 +26,6 @@
     UINavigationController *deviceNavigation = [[UINavigationController alloc] initWithRootViewController:device];
     deviceNavigation.navigationBar.prefersLargeTitles = YES;
     deviceNavigation.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"机型" image:[UIImage systemImageNamed:@"iphone.gen3"] tag:2];
-
-    UITabBarAppearance *bar = [UITabBarAppearance new];
-    [bar configureWithOpaqueBackground];
-    UITabBar.appearance.standardAppearance = bar;
-    UITabBar.appearance.scrollEdgeAppearance = bar;
 
     UITabBarController *tabs = [UITabBarController new];
     tabs.viewControllers = @[appsNavigation, backupsNavigation, deviceNavigation];

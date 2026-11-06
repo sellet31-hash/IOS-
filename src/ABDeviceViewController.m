@@ -1,6 +1,7 @@
 #import "ABDeviceViewController.h"
 #import "ABDeviceCatalog.h"
 #import "ABDeviceStore.h"
+#import "ABChrome.h"
 #import "ABIcon.h"
 
 @interface ABDeviceViewController ()
@@ -45,9 +46,12 @@
 
     UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"iphone.gen3"]];
     icon.translatesAutoresizingMaskIntoConstraints = NO;
-    icon.tintColor = ABAccentColor();
-    icon.contentMode = UIViewContentModeScaleAspectFit;
-    icon.preferredSymbolConfiguration = [UIImageSymbolConfiguration configurationWithPointSize:28 weight:UIImageSymbolWeightSemibold];
+    icon.tintColor = UIColor.whiteColor;
+    icon.contentMode = UIViewContentModeCenter;
+    icon.backgroundColor = ABAccentColor();
+    icon.layer.cornerRadius = 22;
+    icon.layer.cornerCurve = kCACornerCurveContinuous;
+    icon.preferredSymbolConfiguration = [UIImageSymbolConfiguration configurationWithPointSize:22 weight:UIImageSymbolWeightSemibold];
 
     UILabel *title = [UILabel new];
     UILabel *detail = [UILabel new];
@@ -77,8 +81,8 @@
         [card.bottomAnchor constraintEqualToAnchor:header.bottomAnchor constant:-12],
         [icon.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
         [icon.centerYAnchor constraintEqualToAnchor:card.centerYAnchor],
-        [icon.widthAnchor constraintEqualToConstant:36],
-        [icon.heightAnchor constraintEqualToConstant:36],
+        [icon.widthAnchor constraintEqualToConstant:44],
+        [icon.heightAnchor constraintEqualToConstant:44],
         [title.leadingAnchor constraintEqualToAnchor:icon.trailingAnchor constant:14],
         [title.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
         [title.topAnchor constraintEqualToAnchor:card.topAnchor constant:18],
