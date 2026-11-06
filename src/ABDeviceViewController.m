@@ -227,7 +227,7 @@
         [self presentViewController:alert animated:YES completion:nil];
         return;
     }
-    [ABDeviceStore setEnabled:YES];
+    [ABDeviceStore setEnabled:YES error:nil];
     [self reloadSelection];
 }
 
