@@ -81,7 +81,7 @@ static BOOL gDSPRealMachineCaptured = NO;
 
 static void DSPWriteLoadMarker(void) {
     NSDictionary *info = @{
-        @"version" : @"1.2.18",
+        @"version" : @"1.2.19",
         @"bundle" : [[NSBundle mainBundle] bundleIdentifier] ?: @"",
         @"process" : [[NSProcessInfo processInfo] processName] ?: @"",
         @"productType" : [DSPProfile productType],

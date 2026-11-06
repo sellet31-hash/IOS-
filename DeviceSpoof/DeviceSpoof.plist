@@ -6,8 +6,10 @@
 	<dict>
 		<key>Bundles</key>
 		<array>
-			<string>com.apple.UIKit</string>
+			<string>com.beeasy.shopee.tw</string>
 		</array>
+		<key>Mode</key>
+		<string>Any</string>
 	</dict>
 </dict>
 </plist>

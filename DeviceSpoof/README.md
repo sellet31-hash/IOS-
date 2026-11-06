@@ -2,11 +2,11 @@
 
 仅在 **台湾虾皮** 进程内生效。目标：在不重刷 iOS 的前提下，尽量模拟 **「刷机后首次安装虾皮」** 时客户端会上报的安装实例 ID，而不是只改序列号。
 
-## 1.2.18
+## 1.2.19
 
-1.2.16 已经进了虾皮进程，沙盒 `Library/Caches/com.appbackup.devicespoof.lastload.plist` 里 version 是 1.2.16，但 `hookSysctl`、`hookUname`、`hookGestalt` 都是 0。ElleKit 没有改成系统函数，虾皮仍读到真机 `iPhone13,2`，服务器就继续显示 iPhone 12。`/var/jb` 当时也不存在，所以 `/var/jb/tmp` 里看不到这个标记。
+1.2.16 已经注入虾皮，但 `hookSysctl`、`hookUname`、`hookGestalt` 都是 0，系统函数没换掉，上报的仍是 `iPhone13,2`。标记写在沙盒 `Library/Caches`，不在 `/var/jb/tmp`，因为当时 `/var/jb` 不存在。
 
-1.2.18 先用 `dlsym` 找到真正的系统函数再挂钩。ElleKit 若没装上，仍会改写虾皮自己的函数指针，并在主线程再试一次。
+1.2.19 用 `dlsym` 挂钩真正的系统函数；ElleKit 没挂上时，改写虾皮自己的函数指针。过滤条件改回 `com.beeasy.shopee.tw`，这是这台手机上实际注入成功的条件。请用 Filza 安装 deb，不要手工覆盖 dylib。
 
 ## 1.2.17
 
