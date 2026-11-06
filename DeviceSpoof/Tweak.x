@@ -1,11 +1,10 @@
 #import <Foundation/Foundation.h>
-#import <CoreFoundation/CoreFoundation.h>
 #import <UIKit/UIKit.h>
+#import <AdSupport/AdSupport.h>
+#import <Security/Security.h>
 #import <substrate.h>
 #import <dlfcn.h>
 #import <errno.h>
-#import <stdio.h>
-#import <stdlib.h>
 #import <string.h>
 #import <sys/sysctl.h>
 #import <sys/utsname.h>
@@ -13,16 +12,13 @@
 #import "DSPProfile.h"
 #import "DSPShopeeReport.h"
 
-#ifndef VM_PROT_COPY
-#define VM_PROT_COPY 0x10
-#endif
-
 static void DSPPrepareAnswers(void);
 
-static CFTypeRef (*orig_MGCopyAnswer)(CFStringRef);
 static int (*orig_sysctlbyname)(const char *, void *, size_t *, void *, size_t);
 static int (*orig_sysctl)(int *, unsigned int, void *, size_t *, void *, size_t);
 static int (*orig_uname)(struct utsname *);
+static CFTypeRef (*orig_MGCopyAnswer)(CFStringRef);
+static OSStatus (*orig_SecItemCopyMatching)(CFDictionaryRef, CFTypeRef *);
 static __thread int gDSPSysctlbynameDepth;
 static __thread int gDSPSysctlDepth;
 static __thread int gDSPUnameDepth;
@@ -31,15 +27,12 @@ static __thread int gDSPStringHookDepth;
 static const char *kDSPMachineUTF8;
 static const char *kDSPModelUTF8;
 static uint32_t gDSPReboundSlots = 0;
-static uint32_t gDSPProtectFails = 0;
-static uint32_t gDSPImagesSeen = 0;
 static BOOL gDSPAnswersReady = NO;
 static NSString *gDSPSeenMachine = nil;
-static NSString *gDSPSeenModel = nil;
 
 static void DSPWriteLoadMarker(void) {
     NSDictionary *info = @{
-        @"version" : @"1.2.25",
+        @"version" : @"1.2.27",
         @"bundle" : [[NSBundle mainBundle] bundleIdentifier] ?: @"",
         @"process" : [[NSProcessInfo processInfo] processName] ?: @"",
         @"productType" : [DSPProfile productType],
@@ -47,12 +40,8 @@ static void DSPWriteLoadMarker(void) {
         @"enabled" : @([DSPProfile isSpoofEnabled]),
         @"hookSysctl" : @(orig_sysctlbyname != NULL),
         @"hookUname" : @(orig_uname != NULL),
-        @"hookGestalt" : @(orig_MGCopyAnswer != NULL),
         @"reboundSlots" : @(gDSPReboundSlots),
         @"seenMachine" : gDSPSeenMachine ?: @"",
-        @"seenModel" : gDSPSeenModel ?: @"",
-        @"protectFails" : @(gDSPProtectFails),
-        @"imagesSeen" : @(gDSPImagesSeen),
         @"loadedAt" : @((NSInteger)[[NSDate date] timeIntervalSince1970]),
         @"markerHint" : @"Filza: Shopee container Library/Caches, or /var/jb/tmp/",
     };
@@ -86,6 +75,7 @@ static const char *DSPSpoofForSysctlName(const char *name) {
     if (!name) {
         return NULL;
     }
+    // kern.osproductversion stays on the real iOS. Reporting 26.0 from sysctl makes Shopee quit.
     if ((strcmp(name, "hw.machine") == 0 || strcmp(name, "hw.product") == 0) && kDSPMachineUTF8) {
         return kDSPMachineUTF8;
     }
@@ -127,8 +117,7 @@ static int DSP_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void 
         return -1;
     }
     if (gDSPSysctlbynameDepth > 0) {
-        errno = EAGAIN;
-        return -1;
+        return orig_sysctlbyname(name, oldp, oldlenp, newp, newlen);
     }
     gDSPSysctlbynameDepth++;
     int result = orig_sysctlbyname(name, oldp, oldlenp, newp, newlen);
@@ -153,8 +142,7 @@ static int DSP_sysctl(int *name, unsigned int namelen, void *oldp, size_t *oldle
         return -1;
     }
     if (gDSPSysctlDepth > 0) {
-        errno = EAGAIN;
-        return -1;
+        return orig_sysctl(name, namelen, oldp, oldlenp, newp, newlen);
     }
     gDSPSysctlDepth++;
     int result = orig_sysctl(name, namelen, oldp, oldlenp, newp, newlen);
@@ -168,8 +156,7 @@ static int DSP_uname(struct utsname *buffer) {
         return -1;
     }
     if (gDSPUnameDepth > 0) {
-        errno = EAGAIN;
-        return -1;
+        return orig_uname(buffer);
     }
     gDSPUnameDepth++;
     int result = orig_uname(buffer);
@@ -185,15 +172,6 @@ static void DSPPrepareAnswers(void) {
     kDSPModelUTF8 = [DSPProfile hardwareModelUTF8];
 }
 
-__attribute__((constructor(1))) static void DSPEarlyLoadNote(void) {
-    FILE *file = fopen("/var/jb/tmp/devicespoof-loaded.txt", "w");
-    if (!file) {
-        return;
-    }
-    fprintf(file, "pid=%d prog=%s\n", getpid(), getprogname() ? getprogname() : "");
-    fclose(file);
-}
-
 %hook UIDevice
 
 - (NSUUID *)identifierForVendor {
@@ -203,6 +181,14 @@ __attribute__((constructor(1))) static void DSPEarlyLoadNote(void) {
         if (vendor) {
             return vendor;
         }
+    }
+    return %orig;
+}
+
+- (NSString *)name {
+    DSPEnsureReady();
+    if ([DSPProfile isSpoofEnabled]) {
+        return [DSPProfile spoofedDeviceName];
     }
     return %orig;
 }
@@ -243,6 +229,21 @@ __attribute__((constructor(1))) static void DSPEarlyLoadNote(void) {
     DSPEnsureReady();
     if ([DSPProfile isSpoofEnabled]) {
         return [DSPProfile marketingName];
+    }
+    return %orig;
+}
+
+%end
+
+%hook ASIdentifierManager
+
+- (NSUUID *)advertisingIdentifier {
+    DSPEnsureReady();
+    if ([DSPProfile isSpoofEnabled]) {
+        NSUUID *identifier = [DSPProfile spoofedAdvertisingIdentifier];
+        if (identifier) {
+            return identifier;
+        }
     }
     return %orig;
 }
@@ -386,6 +387,51 @@ __attribute__((constructor(1))) static void DSPEarlyLoadNote(void) {
 
 %end
 
+static NSArray<NSHTTPCookie *> *DSPRewriteCookies(NSArray<NSHTTPCookie *> *cookies) {
+    if (![DSPProfile isSpoofEnabled] || ![DSPProfile simulateFreshInstall] || cookies.count == 0) {
+        return cookies;
+    }
+    NSMutableArray<NSHTTPCookie *> *rewritten = [NSMutableArray arrayWithCapacity:cookies.count];
+    for (NSHTTPCookie *cookie in cookies) {
+        if (![DSPShopeeReport isPersistentDeviceCookieName:cookie.name]) {
+            [rewritten addObject:cookie];
+            continue;
+        }
+        NSMutableDictionary *properties = [cookie.properties mutableCopy];
+        properties[NSHTTPCookieValue] = [DSPShopeeReport deviceFingerprintHex];
+        NSHTTPCookie *replacement = properties ? [NSHTTPCookie cookieWithProperties:properties] : nil;
+        [rewritten addObject:replacement ?: cookie];
+    }
+    return rewritten;
+}
+
+%hook NSHTTPCookieStorage
+
+- (NSArray<NSHTTPCookie *> *)cookies {
+    return DSPRewriteCookies(%orig);
+}
+
+- (NSArray<NSHTTPCookie *> *)cookiesForURL:(NSURL *)URL {
+    return DSPRewriteCookies(%orig);
+}
+
+- (void)setCookie:(NSHTTPCookie *)cookie {
+    if ([DSPProfile isSpoofEnabled] && [DSPProfile simulateFreshInstall] && [DSPShopeeReport isPersistentDeviceCookieName:cookie.name]) {
+        NSMutableDictionary *properties = [cookie.properties mutableCopy];
+        if (properties) {
+            properties[NSHTTPCookieValue] = [DSPShopeeReport deviceFingerprintHex];
+            NSHTTPCookie *replacement = [NSHTTPCookie cookieWithProperties:properties];
+            if (replacement) {
+                %orig(replacement);
+                return;
+            }
+        }
+    }
+    %orig;
+}
+
+%end
+
 %hook NSString
 
 + (instancetype)stringWithUTF8String:(const char *)bytes {
@@ -414,6 +460,103 @@ __attribute__((constructor(1))) static void DSPEarlyLoadNote(void) {
 
 %end
 
+static BOOL DSPCFEquals(CFStringRef string, const char *utf8) {
+    if (!string || !utf8 || CFGetTypeID(string) != CFStringGetTypeID()) {
+        return NO;
+    }
+    CFStringRef key = CFStringCreateWithCString(NULL, utf8, kCFStringEncodingUTF8);
+    BOOL equal = key && CFStringCompare(string, key, 0) == kCFCompareEqualTo;
+    if (key) {
+        CFRelease(key);
+    }
+    return equal;
+}
+
+static CFTypeRef DSP_MGCopyAnswer(CFStringRef property) {
+    if ([DSPProfile isSpoofEnabled] && property && CFGetTypeID(property) == CFStringGetTypeID()) {
+        if (DSPCFEquals(property, "ProductType")) {
+            return CFStringCreateWithCString(NULL, [DSPProfile productTypeUTF8], kCFStringEncodingUTF8);
+        }
+        if (DSPCFEquals(property, "HardwareModel") || DSPCFEquals(property, "HWModelStr")) {
+            return CFStringCreateWithCString(NULL, [DSPProfile hardwareModelUTF8], kCFStringEncodingUTF8);
+        }
+        if (DSPCFEquals(property, "SerialNumber")) {
+            return CFStringCreateWithCString(NULL, [DSPProfile serialNumberUTF8], kCFStringEncodingUTF8);
+        }
+        if (DSPCFEquals(property, "MLBSerialNumber")) {
+            return CFStringCreateWithCString(NULL, [DSPProfile mlbSerialUTF8], kCFStringEncodingUTF8);
+        }
+        if (DSPCFEquals(property, "InstallUUID") || DSPCFEquals(property, "InstallationUUID")) {
+            return CFStringCreateWithCString(NULL, [DSPProfile installSessionUUIDUTF8], kCFStringEncodingUTF8);
+        }
+    }
+    return orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL;
+}
+
+static BOOL DSPSecItemNamesDeviceIdentity(CFDictionaryRef query) {
+    if (!query || CFGetTypeID(query) != CFDictionaryGetTypeID()) {
+        return NO;
+    }
+    const void *keys[] = { kSecAttrAccount, kSecAttrService, kSecAttrLabel, kSecAttrGeneric };
+    for (unsigned int index = 0; index < sizeof(keys) / sizeof(keys[0]); index++) {
+        const void *value = CFDictionaryGetValue(query, keys[index]);
+        if (!value || CFGetTypeID(value) != CFStringGetTypeID()) {
+            continue;
+        }
+        NSString *text = [(__bridge NSString *)value lowercaseString];
+        if ([text containsString:@"devicefingerprint"] || [text containsString:@"deviceid"] || [text containsString:@"device_id"] ||
+            [text containsString:@"spc_f"] || [text containsString:@"spc_did"] || [text containsString:@"installuuid"] ||
+            [text containsString:@"idfv"] || [text containsString:@"idfa"]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+static OSStatus DSP_SecItemCopyMatching(CFDictionaryRef query, CFTypeRef *result) {
+    if (![DSPProfile isSpoofEnabled] || ![DSPProfile simulateFreshInstall]) {
+        return orig_SecItemCopyMatching ? orig_SecItemCopyMatching(query, result) : errSecParam;
+    }
+    if (DSPSecItemNamesDeviceIdentity(query)) {
+        if (result) {
+            *result = NULL;
+        }
+        return errSecItemNotFound;
+    }
+    if (!orig_SecItemCopyMatching) {
+        return errSecParam;
+    }
+    OSStatus status = orig_SecItemCopyMatching(query, result);
+    if (status != errSecSuccess || !result || !*result || CFGetTypeID(*result) != CFArrayGetTypeID()) {
+        return status;
+    }
+    CFArrayRef items = (CFArrayRef)*result;
+    CFIndex count = CFArrayGetCount(items);
+    CFMutableArrayRef kept = CFArrayCreateMutable(NULL, (CFIndex)count, &kCFTypeArrayCallBacks);
+    for (CFIndex index = 0; index < count; index++) {
+        CFTypeRef item = CFArrayGetValueAtIndex(items, index);
+        if (item && CFGetTypeID(item) == CFDictionaryGetTypeID() && DSPSecItemNamesDeviceIdentity((CFDictionaryRef)item)) {
+            continue;
+        }
+        if (item) {
+            CFArrayAppendValue(kept, item);
+        }
+    }
+    if (CFArrayGetCount(kept) == 0) {
+        CFRelease(kept);
+        CFRelease(*result);
+        *result = NULL;
+        return errSecItemNotFound;
+    }
+    if (CFArrayGetCount(kept) != count) {
+        CFRelease(*result);
+        *result = kept;
+    } else {
+        CFRelease(kept);
+    }
+    return status;
+}
+
 static BOOL DSPHookOne(const char *name, void *linked, void *replacement, void **original) {
     void *symbol = name ? dlsym(RTLD_DEFAULT, name) : NULL;
     if (!symbol) {
@@ -436,9 +579,17 @@ static void DSPInstallSafeHooks(void) {
     if (access("/var/jb/tmp/devicespoof-nohook", F_OK) == 0) {
         return;
     }
+    // Hook the shared functions. Do not rewrite Shopee's own pages; that makes the process exit.
     DSPHookOne("sysctlbyname", (void *)sysctlbyname, (void *)DSP_sysctlbyname, (void **)&orig_sysctlbyname);
     DSPHookOne("sysctl", (void *)sysctl, (void *)DSP_sysctl, (void **)&orig_sysctl);
     DSPHookOne("uname", (void *)uname, (void *)DSP_uname, (void **)&orig_uname);
+    DSPHookOne("SecItemCopyMatching", (void *)SecItemCopyMatching, (void *)DSP_SecItemCopyMatching, (void **)&orig_SecItemCopyMatching);
+    void *gestalt = dlsym(RTLD_DEFAULT, "MGCopyAnswer");
+    if (!gestalt) {
+        void *library = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
+        gestalt = library ? dlsym(library, "MGCopyAnswer") : NULL;
+    }
+    DSPHookOne("MGCopyAnswer", gestalt, (void *)DSP_MGCopyAnswer, (void **)&orig_MGCopyAnswer);
 }
 
 %ctor {
@@ -469,7 +620,6 @@ static void DSPInstallSafeHooks(void) {
         if (sysctlbyname("hw.machine", seenMachine, &seenLength, NULL, 0) == 0 && seenMachine[0]) {
             gDSPSeenMachine = [[NSString alloc] initWithBytes:seenMachine length:strlen(seenMachine) encoding:NSUTF8StringEncoding];
         }
-        gDSPSeenModel = [[UIDevice currentDevice] model];
     }
     DSPWriteLoadMarker();
     installed = YES;

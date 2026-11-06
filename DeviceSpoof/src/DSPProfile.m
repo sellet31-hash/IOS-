@@ -1,9 +1,12 @@
 #import "DSPProfile.h"
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
+#import <stdio.h>
 #import <string.h>
+#import <uuid/uuid.h>
 
 static NSString *const kDSPPrefsPathRootless = @"/var/jb/Library/Preferences/com.appbackup.devicespoof.plist";
+static NSString *const kDSPPrefsFileName = @"com.appbackup.devicespoof.plist";
 static NSString *const kDSPKeyEnabled = @"enabled";
 static NSString *const kDSPKeyVendorUUID = @"vendorUUID";
 static NSString *const kDSPKeyStoredVendorUUID = @"storedVendorUUID";
@@ -29,6 +32,8 @@ static NSUUID *sVendorUUID = nil;
 static NSString *sInstallUUIDString = nil;
 static NSString *sDeviceFingerprintHex = nil;
 static char sRealMachine[32];
+static char sSerial[13];
+static char sMLB[20];
 static NSString *sRealMarketingName = nil;
 
 static NSString *DSPMarketingNameForMachine(NSString *machine) {
@@ -75,11 +80,38 @@ static NSUUID *DSPParseUUID(NSString *value) {
     return [[NSUUID alloc] initWithUUIDString:value];
 }
 
+static NSString *DSPSandboxPrefsPath(void) {
+    NSString *home = NSHomeDirectory();
+    if (home.length == 0) {
+        return nil;
+    }
+    return [home stringByAppendingPathComponent:[@"Library/Preferences" stringByAppendingPathComponent:kDSPPrefsFileName]];
+}
+
+static NSMutableDictionary *DSPLoadPlist(void) {
+    NSDictionary *rootless = [NSDictionary dictionaryWithContentsOfFile:kDSPPrefsPathRootless];
+    if (rootless.count > 0) {
+        return [rootless mutableCopy];
+    }
+    NSString *sandbox = DSPSandboxPrefsPath();
+    NSDictionary *local = sandbox.length ? [NSDictionary dictionaryWithContentsOfFile:sandbox] : nil;
+    return local ? [local mutableCopy] : [NSMutableDictionary dictionary];
+}
+
 static void DSPSavePlist(NSDictionary *plist) {
     if (!plist) {
         return;
     }
     [plist writeToFile:kDSPPrefsPathRootless atomically:YES];
+    NSString *sandbox = DSPSandboxPrefsPath();
+    if (sandbox.length == 0) {
+        return;
+    }
+    [[NSFileManager defaultManager] createDirectoryAtPath:[sandbox stringByDeletingLastPathComponent]
+                              withIntermediateDirectories:YES
+                                               attributes:nil
+                                                    error:nil];
+    [plist writeToFile:sandbox atomically:YES];
 }
 
 static NSString *DSPFreshUUIDString(void) {
@@ -102,10 +134,7 @@ static NSString *DSPFreshDeviceFingerprintHex(void) {
 @implementation DSPProfile
 
 + (void)reloadPreferences {
-    NSMutableDictionary *plist = [[NSDictionary dictionaryWithContentsOfFile:kDSPPrefsPathRootless] mutableCopy];
-    if (!plist) {
-        plist = [NSMutableDictionary dictionary];
-    }
+    NSMutableDictionary *plist = DSPLoadPlist();
 
     id enabled = plist[kDSPKeyEnabled];
     if ([enabled isKindOfClass:[NSNumber class]]) {
@@ -184,6 +213,18 @@ static NSString *DSPFreshDeviceFingerprintHex(void) {
     if (dirty) {
         DSPSavePlist(plist);
     }
+    const char *serialSource = sInstallUUIDString.UTF8String;
+    const char *alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    size_t sourceLength = serialSource ? strlen(serialSource) : 0;
+    if (sourceLength == 0) {
+        strlcpy(sSerial, "F3PF534FRQ7E", sizeof(sSerial));
+    } else {
+        for (int index = 0; index < 12; index++) {
+            sSerial[index] = alphabet[((unsigned char)serialSource[index % sourceLength]) % 32];
+        }
+        sSerial[12] = '\0';
+    }
+    snprintf(sMLB, sizeof(sMLB), "%sH7ABC", sSerial);
 }
 
 + (void)captureRealMachine:(const char *)machine {
@@ -217,6 +258,21 @@ static NSString *DSPFreshDeviceFingerprintHex(void) {
     return sVendorUUID;
 }
 
++ (NSUUID *)spoofedAdvertisingIdentifier {
+    if (!sVendorUUID) {
+        return nil;
+    }
+    uuid_t bytes;
+    [sVendorUUID getUUIDBytes:bytes];
+    bytes[0] ^= 0x5A;
+    bytes[15] ^= 0xA5;
+    return [[NSUUID alloc] initWithUUIDBytes:bytes];
+}
+
++ (NSString *)spoofedDeviceName {
+    return @"iPhone";
+}
+
 + (NSString *)shopeeDeviceFingerprintHex {
     return sDeviceFingerprintHex ?: @"";
 }
@@ -238,11 +294,11 @@ static NSString *DSPFreshDeviceFingerprintHex(void) {
 }
 
 + (const char *)serialNumberUTF8 {
-    return kDSPSerialUTF8;
+    return sSerial[0] ? sSerial : kDSPSerialUTF8;
 }
 
 + (const char *)mlbSerialUTF8 {
-    return kDSPMLBUTF8;
+    return sMLB[0] ? sMLB : kDSPMLBUTF8;
 }
 
 + (NSString *)productType {

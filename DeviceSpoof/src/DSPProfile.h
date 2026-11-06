@@ -25,6 +25,8 @@
 + (BOOL)isSpoofEnabled;
 + (BOOL)simulateFreshInstall;
 + (NSUUID *)spoofedVendorIdentifier;
++ (NSUUID *)spoofedAdvertisingIdentifier;
++ (NSString *)spoofedDeviceName;
 + (NSString *)shopeeDeviceFingerprintHex;
 + (void)reloadPreferences;
 + (void)captureRealMachine:(const char *)machine;

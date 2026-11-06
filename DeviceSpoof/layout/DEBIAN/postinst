@@ -28,7 +28,9 @@ if [ -z "$src" ]; then
 fi
 
 dir=$(dirname "$src")
-cp -f "$dir/DeviceSpoof.dylib" "$dir/DeviceSpoof.plist" "$libs/"
+if [ ! "$dir/DeviceSpoof.dylib" -ef "$libs/DeviceSpoof.dylib" ]; then
+	cp -f "$dir/DeviceSpoof.dylib" "$dir/DeviceSpoof.plist" "$libs/"
+fi
 
 if [ -L "$inject" ] || [ "$inject" -ef "$libs" ]; then
 	cp -f "$libs/DeviceSpoof.dylib" "$libs/DeviceSpoof.plist" "$inject/" 2>/dev/null || true

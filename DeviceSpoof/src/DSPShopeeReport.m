@@ -3,13 +3,16 @@
 #import <string.h>
 
 static NSArray<NSString *> *DSPFingerprintKeys(void) {
-    return @[ @"devicefingerprint", @"deviceid", @"device_id", @"devid", @"dfp" ];
+    return @[
+        @"devicefingerprint", @"deviceid", @"device_id", @"devid", @"dfp",
+        @"spc_f", @"spc_did", @"spc_d", @"clientid"
+    ];
 }
 
 static NSArray<NSString *> *DSPModelKeys(void) {
     return @[
         @"device_model", @"devicemodel", @"devices", @"machine", @"hardware_model",
-        @"phone_model", @"model", @"platform_model", @"hw_machine", @"product_type"
+        @"phone_model", @"platform_model", @"hw_machine", @"product_type"
     ];
 }
 
@@ -21,7 +24,7 @@ static NSArray<NSString *> *DSPMarketingNameKeys(void) {
 }
 
 static NSArray<NSString *> *DSPOSVersionKeys(void) {
-    return @[ @"os_version", @"osversion", @"api", @"systemversion", @"ios_version" ];
+    return @[ @"os_version", @"osversion", @"systemversion", @"ios_version", @"api" ];
 }
 
 @implementation DSPShopeeReport
@@ -53,6 +56,23 @@ static NSArray<NSString *> *DSPOSVersionKeys(void) {
         return NO;
     }
     return [DSPMarketingNameKeys() containsObject:key.lowercaseString];
+}
+
++ (BOOL)isVersionString:(NSString *)value {
+    if (value.length < 3 || value.length > 16) {
+        return NO;
+    }
+    NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:@"0123456789."];
+    return [value rangeOfCharacterFromSet:allowed.invertedSet].location == NSNotFound && [value containsString:@"."];
+}
+
++ (BOOL)isPersistentDeviceCookieName:(NSString *)name {
+    if (name.length == 0) {
+        return NO;
+    }
+    NSString *lower = name.lowercaseString;
+    return [lower isEqualToString:@"spc_f"] || [lower isEqualToString:@"spc_did"] || [lower isEqualToString:@"spc_d"] ||
+           [lower isEqualToString:@"deviceid"] || [lower isEqualToString:@"device_id"] || [lower isEqualToString:@"devicefingerprint"];
 }
 
 + (NSString *)marketingNameForReports {
@@ -143,16 +163,9 @@ static NSArray<NSString *> *DSPOSVersionKeys(void) {
     if ([node isKindOfClass:[NSDictionary class]]) {
         NSMutableDictionary *out = [NSMutableDictionary dictionaryWithCapacity:[(NSDictionary *)node count]];
         [(NSDictionary *)node enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) {
-            NSString *keyString = nil;
-            if ([key isKindOfClass:[NSString class]]) {
-                keyString = (NSString *)key;
-            } else if ([key respondsToSelector:@selector(description)]) {
-                keyString = [(id)key description];
-            } else {
-                keyString = [NSString stringWithFormat:@"%@", key];
-            }
+            NSString *keyString = [key isKindOfClass:[NSString class]] ? (NSString *)key : nil;
             id child = [self rewriteNode:obj depth:depth + 1];
-            if ([self isDeviceFingerprintKey:keyString]) {
+            if (keyString && [self isDeviceFingerprintKey:keyString]) {
                 out[key] = [self deviceFingerprintHex];
             } else if ([self isMarketingNameKey:keyString]) {
                 if ([child isKindOfClass:[NSString class]] && [(NSString *)child containsString:@"iPhone"]) {
@@ -166,8 +179,13 @@ static NSArray<NSString *> *DSPOSVersionKeys(void) {
                 } else {
                     out[key] = child;
                 }
-            } else if ([self isOSVersionKey:keyString]) {
-                out[key] = [self osVersionForReports];
+            } else if (keyString && [self isOSVersionKey:keyString]) {
+                if ([keyString caseInsensitiveCompare:@"api"] == NSOrderedSame &&
+                    (![child isKindOfClass:[NSString class]] || ![self isVersionString:(NSString *)child])) {
+                    out[key] = child;
+                } else {
+                    out[key] = [self osVersionForReports];
+                }
             } else {
                 out[key] = child;
             }
