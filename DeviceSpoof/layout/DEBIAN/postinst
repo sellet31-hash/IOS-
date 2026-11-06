@@ -1,35 +1,24 @@
 #!/bin/sh
-src="/var/jb/Library/MobileSubstrate/DynamicLibraries"
 inject="/var/jb/usr/lib/TweakInject"
+libs="/var/jb/Library/MobileSubstrate/DynamicLibraries"
 
-mkdir -p "$src" /var/jb/usr/lib /var/jb/tmp
+mkdir -p /var/jb/tmp
 
-if [ ! -f "$src/DeviceSpoof.dylib" ]; then
-	exit 0
-fi
-
-if [ -d "$inject" ] && [ ! -L "$inject" ]; then
-	others=0
-	for file in "$inject"/*.dylib; do
-		name=$(basename "$file")
-		if [ -f "$file" ] && [ "$name" != "DeviceSpoof.dylib" ]; then
-			others=1
-		fi
-	done
-	if [ "$others" -eq 0 ]; then
-		rm -rf "$inject"
-	else
-		cp -f "$src/DeviceSpoof.dylib" "$src/DeviceSpoof.plist" "$inject/"
-		exit 0
+if [ ! -f "$inject/DeviceSpoof.dylib" ] && [ -f "$libs/DeviceSpoof.dylib" ]; then
+	if [ -L "$inject" ] && [ ! -d "$inject" ]; then
+		rm -f "$inject"
+	fi
+	if [ ! -e "$inject" ]; then
+		ln -s "$libs" "$inject"
+	fi
+	if [ -d "$inject" ] && [ ! -L "$inject" ]; then
+		cp -f "$libs/DeviceSpoof.dylib" "$libs/DeviceSpoof.plist" "$inject/"
 	fi
 fi
 
-if [ -L "$inject" ] && [ ! -d "$inject" ]; then
-	rm -f "$inject"
-fi
-
-if [ ! -e "$inject" ]; then
-	ln -s "$src" "$inject"
+if [ -f "$inject/DeviceSpoof.dylib" ] && [ ! -L "$inject" ]; then
+	mkdir -p "$libs"
+	cp -f "$inject/DeviceSpoof.dylib" "$inject/DeviceSpoof.plist" "$libs/"
 fi
 
 exit 0

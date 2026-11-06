@@ -2,6 +2,12 @@
 
 仅在 **台湾虾皮** 进程内生效。目标：在不重刷 iOS 的前提下，尽量模拟 **「刷机后首次安装虾皮」** 时客户端会上报的安装实例 ID，而不是只改序列号。
 
+## 1.2.15
+
+ElleKit 只读取 `/var/jb/usr/lib/TweakInject`。1.2.11 之后文件被放进 `DynamicLibraries`，这个目录在这台手机上又没有链过去，所以虾皮进程里没有插件，Filza 也搜不到 `lastload.plist`。
+
+1.2.15 把 dylib 和 plist 直接装进 `TweakInject`。安装前会先建好这个目录，避免 1.2.10 那种解包失败。
+
 ## 1.2.14
 
 登录时间在变、机型一直是 iPhone 12，说明虾皮进程里没有这段挂钩。多巴胺的 ElleKit 只从 `/var/jb/usr/lib/TweakInject` 加载插件。1.2.10 安装时这个目录打不开，之后的包又只放进 `DynamicLibraries`，所以插件不在 ElleKit 的扫描目录里。以前能改机型，是当时这个符号链接还在。
