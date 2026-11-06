@@ -75,19 +75,22 @@ static const char *kDSPModelUTF8;
 static const char *kDSPIOSVersionUTF8;
 static unsigned int gDSPBindCount = 0;
 static DSPBind gDSPBinds[10];
+static uint32_t gDSPReboundSlots = 0;
 static BOOL gDSPAnswersReady = NO;
+static BOOL gDSPRealMachineCaptured = NO;
 
 static void DSPWriteLoadMarker(void) {
     NSDictionary *info = @{
-        @"version" : @"1.2.17",
+        @"version" : @"1.2.18",
         @"bundle" : [[NSBundle mainBundle] bundleIdentifier] ?: @"",
         @"process" : [[NSProcessInfo processInfo] processName] ?: @"",
         @"productType" : [DSPProfile productType],
         @"marketingName" : [DSPProfile marketingName],
         @"enabled" : @([DSPProfile isSpoofEnabled]),
-        @"hookSysctl" : @(orig_sysctlbyname != NULL),
-        @"hookUname" : @(orig_uname != NULL),
-        @"hookGestalt" : @(orig_MGCopyAnswer != NULL),
+        @"hookSysctl" : @(orig_sysctlbyname != NULL && (void *)orig_sysctlbyname != gDSPTargetSysctlbyname),
+        @"hookUname" : @(orig_uname != NULL && (void *)orig_uname != gDSPTargetUname),
+        @"hookGestalt" : @(orig_MGCopyAnswer != NULL && (void *)orig_MGCopyAnswer != gDSPTargetMGCopyAnswer),
+        @"reboundSlots" : @(gDSPReboundSlots),
         @"loadedAt" : @((NSInteger)[[NSDate date] timeIntervalSince1970]),
         @"markerHint" : @"Filza: Shopee container Library/Caches, or /var/jb/tmp/",
     };
@@ -429,6 +432,7 @@ static void DSPWriteSlot(void **slot, void *replacement) {
     }
     if (result == KERN_SUCCESS) {
         *slot = replacement;
+        gDSPReboundSlots++;
     }
 }
 
@@ -793,29 +797,46 @@ __attribute__((constructor(1))) static void DSPEarlyLoadNote(void) {
 
 %end
 
+static void *DSPResolveSymbol(const char *name, void *linked) {
+    void *resolved = name ? dlsym(RTLD_DEFAULT, name) : NULL;
+    return resolved ? resolved : linked;
+}
+
 static BOOL DSPHookLinked(void *symbol, void *replacement, void **original) {
     if (!symbol || !replacement || !original) {
         return NO;
     }
-    *original = NULL;
-    MSHookFunction(symbol, replacement, original);
-    return *original != NULL && *original != symbol && *original != replacement;
+    if (*original && *original != symbol && *original != replacement) {
+        return YES;
+    }
+    void *previous = NULL;
+    MSHookFunction(symbol, replacement, &previous);
+    if (previous && previous != symbol && previous != replacement) {
+        *original = previous;
+        return YES;
+    }
+    // ElleKit left the function itself unchanged. Call the real symbol from
+    // the replacement, and rewrite the app's direct bindings below.
+    *original = symbol;
+    return NO;
 }
 
 static void DSPInstallInlineHooks(void) {
-    char realMachine[32] = {0};
-    size_t realMachineLength = sizeof(realMachine);
-    if (sysctlbyname("hw.machine", realMachine, &realMachineLength, NULL, 0) == 0) {
-        [DSPProfile captureRealMachine:realMachine];
+    if (!gDSPRealMachineCaptured) {
+        char realMachine[32] = {0};
+        size_t realMachineLength = sizeof(realMachine);
+        if (sysctlbyname("hw.machine", realMachine, &realMachineLength, NULL, 0) == 0 && realMachine[0]) {
+            [DSPProfile captureRealMachine:realMachine];
+            gDSPRealMachineCaptured = YES;
+        }
     }
 
-    gDSPTargetSysctlbyname = (void *)sysctlbyname;
-    gDSPTargetSysctl = (void *)sysctl;
-    gDSPTargetUname = (void *)uname;
-    gDSPTargetDlsym = (void *)dlsym;
-    gDSPTargetSecItem = (void *)SecItemCopyMatching;
+    gDSPTargetSysctlbyname = DSPResolveSymbol("sysctlbyname", (void *)sysctlbyname);
+    gDSPTargetSysctl = DSPResolveSymbol("sysctl", (void *)sysctl);
+    gDSPTargetUname = DSPResolveSymbol("uname", (void *)uname);
+    gDSPTargetDlsym = DSPResolveSymbol("dlsym", (void *)dlsym);
+    gDSPTargetSecItem = DSPResolveSymbol("SecItemCopyMatching", (void *)SecItemCopyMatching);
     gDSPTargetSyscall = dlsym(RTLD_DEFAULT, "syscall");
-    orig_dlsym = (void *(*)(void *, const char *))dlsym;
 
     void *gestalt = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
     if (!gestalt) {
@@ -834,7 +855,7 @@ static void DSPInstallInlineHooks(void) {
     DSPHookLinked(gDSPTargetSecItem, (void *)DSP_SecItemCopyMatching, (void **)&orig_SecItemCopyMatching);
     DSPHookLinked(gDSPTargetMGCopyAnswer, (void *)DSP_MGCopyAnswer, (void **)&orig_MGCopyAnswer);
     DSPHookLinked(gDSPTargetSyscall, (void *)DSP_syscall, (void **)&orig_syscall);
-    gDSPTargetCFDictionaryGetValue = (void *)CFDictionaryGetValue;
+    gDSPTargetCFDictionaryGetValue = DSPResolveSymbol("CFDictionaryGetValue", (void *)CFDictionaryGetValue);
     DSPHookLinked(gDSPTargetCFDictionaryGetValue, (void *)DSP_CFDictionaryGetValue, (void **)&orig_CFDictionaryGetValue);
 }
 
@@ -859,6 +880,11 @@ static void DSPInstallInlineHooks(void) {
         DSPInstallInlineHooks();
         DSPRebindLoadedImages();
         _dyld_register_func_for_add_image(DSPDyldImageAdded);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            DSPInstallInlineHooks();
+            DSPRebindLoadedImages();
+            DSPWriteLoadMarker();
+        });
     }
     DSPWriteLoadMarker();
     installed = YES;
