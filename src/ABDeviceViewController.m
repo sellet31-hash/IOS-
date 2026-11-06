@@ -22,7 +22,7 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"机型";
+    self.title = @"设置";
     self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeAlways;
     self.generations = [ABDeviceCatalog generations];
     [self reloadSelection];

@@ -117,7 +117,7 @@
     self.bundleLabel.text = self.app.bundleIdentifier;
     self.pathLabel.text = self.app.dataContainerURL.path.length ? self.app.dataContainerURL.path : @"还没有数据目录";
     self.pathButton.hidden = self.app.dataContainerURL.path.length == 0;
-    UIImage *icon = ABAppIcon(self.app.bundleIdentifier);
+    UIImage *icon = ABAppIconForBundle(self.app.bundleIdentifier, self.app.bundleURL);
     self.iconView.image = icon ?: [UIImage systemImageNamed:@"app.fill"];
     self.iconView.tintColor = icon ? nil : UIColor.secondaryLabelColor;
 }

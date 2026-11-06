@@ -1,7 +1,6 @@
 #import "ABAppListViewController.h"
 #import "ABAppDetailViewController.h"
 #import "ABAppLibrary.h"
-#import "ABChrome.h"
 #import "ABIcon.h"
 
 @interface ABAppListViewController () <UISearchResultsUpdating>
@@ -11,13 +10,12 @@
 @property (nonatomic) BOOL loaded;
 @property (nonatomic, strong) UISearchController *searchController;
 @property (nonatomic, strong) dispatch_queue_t loadQueue;
-@property (nonatomic, strong) UILabel *overviewLabel;
 @end
 
 @implementation ABAppListViewController
 
 - (instancetype)init {
-    return [super initWithStyle:UITableViewStyleInsetGrouped];
+    return [super initWithStyle:UITableViewStylePlain];
 }
 
 - (void)viewDidLoad {
@@ -29,58 +27,17 @@
     self.searchController = [[UISearchController alloc] initWithSearchResultsController:nil];
     self.searchController.searchResultsUpdater = self;
     self.searchController.obscuresBackgroundDuringPresentation = NO;
-    self.searchController.searchBar.placeholder = @"搜索名称或 Bundle ID";
+    self.searchController.searchBar.placeholder = @"搜索";
     self.navigationItem.searchController = self.searchController;
     self.navigationItem.hidesSearchBarWhenScrolling = NO;
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"info.circle"] style:UIBarButtonItemStylePlain target:self action:@selector(showHelp)];
     self.definesPresentationContext = YES;
     self.refreshControl = [UIRefreshControl new];
     [self.refreshControl addTarget:self action:@selector(reloadApps) forControlEvents:UIControlEventValueChanged];
     self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
-    [self buildOverview];
+    self.tableView.rowHeight = 64;
+    self.tableView.separatorInset = UIEdgeInsetsMake(0, 76, 0, 0);
+    self.tableView.backgroundColor = UIColor.systemBackgroundColor;
     [self reloadApps];
-}
-
-- (void)buildOverview {
-    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, 92)];
-    UIView *card = [UIView new];
-    card.translatesAutoresizingMaskIntoConstraints = NO;
-    card.backgroundColor = UIColor.secondarySystemGroupedBackgroundColor;
-    card.layer.cornerRadius = 16;
-    card.layer.cornerCurve = kCACornerCurveContinuous;
-    UIImageView *icon = [[UIImageView alloc] initWithImage:ABSymbolImage(@"square.grid.2x2.fill")];
-    icon.translatesAutoresizingMaskIntoConstraints = NO;
-    icon.tintColor = ABAccentColor();
-    UILabel *title = [UILabel new];
-    title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
-    title.text = @"应用库";
-    UILabel *detail = [UILabel new];
-    detail.translatesAutoresizingMaskIntoConstraints = NO;
-    detail.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
-    detail.textColor = UIColor.secondaryLabelColor;
-    detail.text = @"正在读取";
-    self.overviewLabel = detail;
-    [card addSubview:icon];
-    [card addSubview:title];
-    [card addSubview:detail];
-    [header addSubview:card];
-    [NSLayoutConstraint activateConstraints:@[
-        [card.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:20],
-        [card.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-20],
-        [card.topAnchor constraintEqualToAnchor:header.topAnchor constant:4],
-        [card.bottomAnchor constraintEqualToAnchor:header.bottomAnchor constant:-8],
-        [icon.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
-        [icon.centerYAnchor constraintEqualToAnchor:card.centerYAnchor],
-        [title.leadingAnchor constraintEqualToAnchor:icon.trailingAnchor constant:12],
-        [title.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
-        [title.topAnchor constraintEqualToAnchor:card.topAnchor constant:16],
-        [detail.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],
-        [detail.trailingAnchor constraintEqualToAnchor:title.trailingAnchor],
-        [detail.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:2],
-        [detail.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-16],
-    ]];
-    self.tableView.tableHeaderView = header;
 }
 
 - (NSArray<ABAppInfo *> *)visibleApps {
@@ -108,9 +65,9 @@
             self.accessDenied = denied;
             self.loaded = YES;
             [self.refreshControl endRefreshing];
-            self.overviewLabel.text = denied ? @"无法读取其他应用" : [NSString stringWithFormat:@"%lu 个已安装的应用", (unsigned long)apps.count];
             [self.tableView reloadData];
             [self updateEmptyState];
+            [self measureSizes:apps];
         });
     });
 }
@@ -156,18 +113,57 @@
     return [self visibleApps].count;
 }
 
+static uint64_t ABDirectorySize(NSString *path) {
+    if (path.length == 0) {
+        return 0;
+    }
+    NSDirectoryEnumerator *enumerator = [[NSFileManager defaultManager] enumeratorAtURL:[NSURL fileURLWithPath:path]
+                                                             includingPropertiesForKeys:@[NSURLFileSizeKey]
+                                                                                options:0
+                                                                           errorHandler:nil];
+    uint64_t total = 0;
+    for (NSURL *url in enumerator) {
+        NSNumber *size = nil;
+        [url getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
+        total += size.unsignedLongLongValue;
+    }
+    return total;
+}
+
+- (void)measureSizes:(NSArray<ABAppInfo *> *)apps {
+    dispatch_async(self.loadQueue, ^{
+        NSUInteger index = 0;
+        for (ABAppInfo *app in apps) {
+            if (!app.sizeKnown) {
+                app.dataBytes = ABDirectorySize(app.dataContainerURL.path);
+                app.sizeKnown = YES;
+            }
+            index++;
+            if (index % 6 == 0 || index == apps.count) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (self.apps == apps) {
+                        [self.tableView reloadData];
+                    }
+                });
+            }
+        }
+    });
+}
+
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"app"];
     if (!cell) {
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"app"];
     }
-    UIListContentConfiguration *config = [UIListContentConfiguration subtitleCellConfiguration];
-    config.imageProperties.maximumSize = CGSizeMake(44, 44);
-    config.imageProperties.reservedLayoutSize = CGSizeMake(44, 44);
-    config.imageProperties.cornerRadius = 10;
-    cell.accessoryView = nil;
+    UIListContentConfiguration *config = [UIListContentConfiguration valueCellConfiguration];
+    config.imageProperties.maximumSize = CGSizeMake(40, 40);
+    config.imageProperties.reservedLayoutSize = CGSizeMake(40, 40);
+    config.imageProperties.cornerRadius = 9;
+    config.textProperties.font = [UIFont systemFontOfSize:17];
+    config.secondaryTextProperties.font = [UIFont systemFontOfSize:15];
+    config.secondaryTextProperties.color = UIColor.secondaryLabelColor;
     if (!self.loaded) {
-        config.text = @"正在读取已安装的应用";
+        config.text = @"正在读取";
         config.secondaryText = nil;
         config.image = nil;
         cell.contentConfiguration = config;
@@ -177,27 +173,15 @@
     }
     ABAppInfo *app = [self visibleApps][indexPath.row];
     config.text = app.displayName;
-    NSString *version = app.shortVersion.length ? app.shortVersion : app.bundleVersion;
-    config.secondaryText = version.length ? [NSString stringWithFormat:@"%@ · %@", app.bundleIdentifier, version] : app.bundleIdentifier;
-    UIImage *icon = ABAppIcon(app.bundleIdentifier);
-    if (icon) {
-        config.image = icon;
-        config.imageProperties.tintColor = nil;
-    } else {
-        config.image = [UIImage systemImageNamed:@"app.fill"];
-        config.imageProperties.tintColor = UIColor.secondaryLabelColor;
-    }
+    config.secondaryText = app.sizeKnown ? ABFormatBytes(app.dataBytes) : @"";
+    UIImage *icon = ABAppIconForBundle(app.bundleIdentifier, app.bundleURL);
+    config.image = icon ?: [UIImage systemImageNamed:@"app.fill"];
+    config.imageProperties.tintColor = icon ? nil : UIColor.tertiaryLabelColor;
     cell.contentConfiguration = config;
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+    cell.backgroundColor = UIColor.systemBackgroundColor;
     return cell;
-}
-
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    if (!self.loaded) {
-        return nil;
-    }
-    return @"点进应用后可以备份或恢复。备份文件在「文件」App 的「应用备份 / Backups」。";
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
