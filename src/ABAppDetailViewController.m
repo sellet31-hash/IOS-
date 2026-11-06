@@ -323,7 +323,7 @@
                 [self refreshLocationAndBackups];
             }];
         } else {
-            [ABBackupActions confirmCleanApp:self.app fromViewController:self completion:nil];
+            [ABBackupActions confirmCleanApp:self.app fromViewController:self completion:^{}];
         }
         return;
     }
