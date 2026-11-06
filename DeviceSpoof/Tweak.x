@@ -30,7 +30,6 @@ static __thread int gDSPStringHookDepth;
 
 static const char *kDSPMachineUTF8;
 static const char *kDSPModelUTF8;
-static const char *kDSPIOSVersionUTF8;
 static uint32_t gDSPReboundSlots = 0;
 static uint32_t gDSPProtectFails = 0;
 static uint32_t gDSPImagesSeen = 0;
@@ -40,7 +39,7 @@ static NSString *gDSPSeenModel = nil;
 
 static void DSPWriteLoadMarker(void) {
     NSDictionary *info = @{
-        @"version" : @"1.2.24",
+        @"version" : @"1.2.25",
         @"bundle" : [[NSBundle mainBundle] bundleIdentifier] ?: @"",
         @"process" : [[NSProcessInfo processInfo] processName] ?: @"",
         @"productType" : [DSPProfile productType],
@@ -92,9 +91,6 @@ static const char *DSPSpoofForSysctlName(const char *name) {
     }
     if (strcmp(name, "hw.model") == 0 && kDSPModelUTF8) {
         return kDSPModelUTF8;
-    }
-    if (strcmp(name, "kern.osproductversion") == 0 && kDSPIOSVersionUTF8) {
-        return kDSPIOSVersionUTF8;
     }
     return NULL;
 }
@@ -187,7 +183,6 @@ static int DSP_uname(struct utsname *buffer) {
 static void DSPPrepareAnswers(void) {
     kDSPMachineUTF8 = [DSPProfile hwMachineUTF8];
     kDSPModelUTF8 = [DSPProfile hardwareModelUTF8];
-    kDSPIOSVersionUTF8 = [DSPProfile osVersionUTF8];
 }
 
 __attribute__((constructor(1))) static void DSPEarlyLoadNote(void) {
