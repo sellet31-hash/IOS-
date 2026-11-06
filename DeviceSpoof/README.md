@@ -2,6 +2,12 @@
 
 仅在 **台湾虾皮** 进程内生效。目标：在不重刷 iOS 的前提下，尽量模拟 **「刷机后首次安装虾皮」** 时客户端会上报的安装实例 ID，而不是只改序列号。
 
+## 1.2.14
+
+登录时间在变、机型一直是 iPhone 12，说明虾皮进程里没有这段挂钩。多巴胺的 ElleKit 只从 `/var/jb/usr/lib/TweakInject` 加载插件。1.2.10 安装时这个目录打不开，之后的包又只放进 `DynamicLibraries`，所以插件不在 ElleKit 的扫描目录里。以前能改机型，是当时这个符号链接还在。
+
+1.2.14 在安装前把 `TweakInject` 重新链回 `DynamicLibraries`。装完打开一次虾皮，用 Filza 搜 `com.appbackup.devicespoof.lastload.plist`。有这个文件且 `version` 是 1.2.14、`bundle` 是 `com.beeasy.shopee.tw`，才算注入成功。
+
 ## 1.2.13
 
 装置管理还是「Apple iPhone 12」，是因为虾皮自己的机型表用真机标识 `iPhone13,2` 查出「iPhone 12」。系统函数即使被换掉，这张表仍会返回旧名字；TweakInject 目录不存在时 ElleKit 也不会加载插件。

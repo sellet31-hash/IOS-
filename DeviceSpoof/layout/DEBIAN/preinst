@@ -1,0 +1,16 @@
+#!/bin/sh
+src="/var/jb/Library/MobileSubstrate/DynamicLibraries"
+inject="/var/jb/usr/lib/TweakInject"
+
+mkdir -p "$src" /var/jb/usr/lib /var/jb/tmp
+
+if [ -L "$inject" ] && [ -d "$inject" ]; then
+	exit 0
+fi
+
+if [ -L "$inject" ] || [ ! -e "$inject" ]; then
+	rm -f "$inject"
+	ln -s "$src" "$inject"
+fi
+
+exit 0

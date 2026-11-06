@@ -77,8 +77,9 @@ static BOOL gDSPAnswersReady = NO;
 
 static void DSPWriteLoadMarker(void) {
     NSDictionary *info = @{
-        @"version" : @"1.2.13",
+        @"version" : @"1.2.14",
         @"bundle" : [[NSBundle mainBundle] bundleIdentifier] ?: @"",
+        @"process" : [[NSProcessInfo processInfo] processName] ?: @"",
         @"productType" : [DSPProfile productType],
         @"marketingName" : [DSPProfile marketingName],
         @"enabled" : @([DSPProfile isSpoofEnabled]),
@@ -827,6 +828,7 @@ static void DSPInstallInlineHooks(void) {
     if (installed) {
         return;
     }
+    DSPWriteLoadMarker();
     [DSPProfile reloadPreferences];
     DSPEnsureReady();
     if ([DSPProfile isSpoofEnabled]) {

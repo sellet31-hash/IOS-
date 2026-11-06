@@ -2,20 +2,34 @@
 src="/var/jb/Library/MobileSubstrate/DynamicLibraries"
 inject="/var/jb/usr/lib/TweakInject"
 
+mkdir -p "$src" /var/jb/usr/lib /var/jb/tmp
+
 if [ ! -f "$src/DeviceSpoof.dylib" ]; then
 	exit 0
 fi
 
-# A working symlink already exposes DynamicLibraries. A missing or broken
-# TweakInject is why ElleKit never loads the tweak, so the model stays real.
-if [ -L "$inject" ] && [ -d "$inject" ]; then
-	exit 0
+if [ -d "$inject" ] && [ ! -L "$inject" ]; then
+	others=0
+	for file in "$inject"/*.dylib; do
+		name=$(basename "$file")
+		if [ -f "$file" ] && [ "$name" != "DeviceSpoof.dylib" ]; then
+			others=1
+		fi
+	done
+	if [ "$others" -eq 0 ]; then
+		rm -rf "$inject"
+	else
+		cp -f "$src/DeviceSpoof.dylib" "$src/DeviceSpoof.plist" "$inject/"
+		exit 0
+	fi
 fi
 
-if [ -L "$inject" ]; then
+if [ -L "$inject" ] && [ ! -d "$inject" ]; then
 	rm -f "$inject"
 fi
 
-mkdir -p "$inject"
-cp -f "$src/DeviceSpoof.dylib" "$src/DeviceSpoof.plist" "$inject/"
+if [ ! -e "$inject" ]; then
+	ln -s "$src" "$inject"
+fi
+
 exit 0
