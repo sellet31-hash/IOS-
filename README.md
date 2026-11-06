@@ -37,6 +37,8 @@ make stage FINALPACKAGE=1
 
 安装后打开「应用备份」。如果列表提示无法读取，说明当前安装方式仍然在沙盒里。
 
+底部「机型」页可以选择 iPhone 7 Plus 到 iPhone 17。选择写入 DeviceSpoof 的配置，重新打开目标 App 后生效。需要同时安装 DeviceSpoof 1.2.28 或更新版本。
+
 ## 使用
 
 1. 在「应用」里点一个应用。

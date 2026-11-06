@@ -20,8 +20,6 @@ static NSString *const kDSPKeyStoredDeviceFingerprint = @"storedDeviceFingerprin
 static NSString *const kDSPKeyModelEpoch = @"modelEpoch";
 static const NSInteger kDSPModelEpoch = 1;
 
-static const char kDSPProductTypeUTF8[] = "iPhone18,3";
-static const char kDSPHardwareModelUTF8[] = "V57AP";
 static const char kDSPIOSVersionUTF8[] = "26.0";
 static const char kDSPSerialUTF8[] = "F3PF534FRQ7E";
 static const char kDSPMLBUTF8[] = "F3PF534FRQ7EH7ABC";
@@ -34,7 +32,44 @@ static NSString *sDeviceFingerprintHex = nil;
 static char sRealMachine[32];
 static char sSerial[13];
 static char sMLB[20];
+static char sProductUTF8[32] = "iPhone18,3";
+static char sBoardUTF8[32] = "V57AP";
+static NSString *sProductType = @"iPhone18,3";
+static NSString *sMarketingName = @"iPhone 17";
 static NSString *sRealMarketingName = nil;
+static CGFloat sScreenWidth = 393;
+static CGFloat sScreenHeight = 852;
+static CGFloat sScreenScale = 3;
+
+static BOOL DSPLooksLikeProductType(NSString *value) {
+    return [value hasPrefix:@"iPhone"] && [value containsString:@","];
+}
+
+static void DSPApplySelectedModel(NSDictionary *plist) {
+    NSString *product = plist[@"selectedProductType"];
+    NSString *name = plist[@"selectedMarketingName"];
+    NSString *board = plist[@"selectedHardwareModel"];
+    if (!DSPLooksLikeProductType(product) || name.length == 0 || board.length == 0) {
+        strlcpy(sProductUTF8, "iPhone18,3", sizeof(sProductUTF8));
+        strlcpy(sBoardUTF8, "V57AP", sizeof(sBoardUTF8));
+        sProductType = @"iPhone18,3";
+        sMarketingName = @"iPhone 17";
+        sScreenWidth = 393;
+        sScreenHeight = 852;
+        sScreenScale = 3;
+        return;
+    }
+    strlcpy(sProductUTF8, product.UTF8String, sizeof(sProductUTF8));
+    strlcpy(sBoardUTF8, board.UTF8String, sizeof(sBoardUTF8));
+    sProductType = [product copy];
+    sMarketingName = [name copy];
+    double width = [plist[@"selectedScreenWidth"] doubleValue];
+    double height = [plist[@"selectedScreenHeight"] doubleValue];
+    double scale = [plist[@"selectedScreenScale"] doubleValue];
+    sScreenWidth = width > 0 ? (CGFloat)width : 393;
+    sScreenHeight = height > 0 ? (CGFloat)height : 852;
+    sScreenScale = scale > 0 ? (CGFloat)scale : 3;
+}
 
 static NSString *DSPMarketingNameForMachine(NSString *machine) {
     if (machine.length == 0) {
@@ -213,6 +248,7 @@ static NSString *DSPFreshDeviceFingerprintHex(void) {
     if (dirty) {
         DSPSavePlist(plist);
     }
+    DSPApplySelectedModel(plist);
     const char *serialSource = sInstallUUIDString.UTF8String;
     const char *alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     size_t sourceLength = serialSource ? strlen(serialSource) : 0;
@@ -282,15 +318,15 @@ static NSString *DSPFreshDeviceFingerprintHex(void) {
 }
 
 + (const char *)productTypeUTF8 {
-    return kDSPProductTypeUTF8;
+    return sProductUTF8;
 }
 
 + (const char *)hardwareModelUTF8 {
-    return kDSPHardwareModelUTF8;
+    return sBoardUTF8;
 }
 
 + (const char *)hwMachineUTF8 {
-    return kDSPProductTypeUTF8;
+    return sProductUTF8;
 }
 
 + (const char *)serialNumberUTF8 {
@@ -302,19 +338,19 @@ static NSString *DSPFreshDeviceFingerprintHex(void) {
 }
 
 + (NSString *)productType {
-    return @"iPhone18,3";
+    return sProductType ?: @"iPhone18,3";
 }
 
 + (NSString *)hardwareModel {
-    return @"V57AP";
+    return [NSString stringWithUTF8String:sBoardUTF8] ?: @"V57AP";
 }
 
 + (NSString *)hwMachine {
-    return @"iPhone18,3";
+    return sProductType ?: @"iPhone18,3";
 }
 
 + (NSString *)marketingName {
-    return @"iPhone 17";
+    return sMarketingName ?: @"iPhone 17";
 }
 
 + (NSString *)spoofedOSVersion {
@@ -326,15 +362,15 @@ static NSString *DSPFreshDeviceFingerprintHex(void) {
 }
 
 + (CGRect)screenBounds {
-    return CGRectMake(0, 0, 393, 852);
+    return CGRectMake(0, 0, sScreenWidth, sScreenHeight);
 }
 
 + (CGFloat)screenScale {
-    return 3.0;
+    return sScreenScale;
 }
 
 + (CGRect)nativeScreenBounds {
-    return CGRectMake(0, 0, 1179, 2556);
+    return CGRectMake(0, 0, sScreenWidth * sScreenScale, sScreenHeight * sScreenScale);
 }
 
 @end

@@ -1,6 +1,7 @@
 #import "ABAppDelegate.h"
 #import "ABAppListViewController.h"
 #import "ABBackupListViewController.h"
+#import "ABDeviceViewController.h"
 #import "ABIcon.h"
 
 @implementation ABAppDelegate
@@ -22,8 +23,18 @@
     backupsNavigation.navigationBar.prefersLargeTitles = YES;
     backupsNavigation.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"备份" image:[UIImage systemImageNamed:@"archivebox"] tag:1];
 
+    ABDeviceViewController *device = [ABDeviceViewController new];
+    UINavigationController *deviceNavigation = [[UINavigationController alloc] initWithRootViewController:device];
+    deviceNavigation.navigationBar.prefersLargeTitles = YES;
+    deviceNavigation.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"机型" image:[UIImage systemImageNamed:@"iphone.gen3"] tag:2];
+
+    UITabBarAppearance *bar = [UITabBarAppearance new];
+    [bar configureWithOpaqueBackground];
+    UITabBar.appearance.standardAppearance = bar;
+    UITabBar.appearance.scrollEdgeAppearance = bar;
+
     UITabBarController *tabs = [UITabBarController new];
-    tabs.viewControllers = @[appsNavigation, backupsNavigation];
+    tabs.viewControllers = @[appsNavigation, backupsNavigation, deviceNavigation];
     self.window.rootViewController = tabs;
     [self.window makeKeyAndVisible];
     return YES;

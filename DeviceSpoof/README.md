@@ -2,6 +2,10 @@
 
 仅在 **台湾虾皮** 进程内生效。目标：在不重刷 iOS 的前提下，尽量模拟 **「刷机后首次安装虾皮」** 时客户端会上报的安装实例 ID，而不是只改序列号。
 
+## 1.2.28
+
+机型不再写死 iPhone 17。应用备份 1.1.0 的「机型」页把选择写入 `/var/jb/Library/Preferences/com.appbackup.devicespoof.plist`，本插件下次启动时读取。没有选择时仍使用 iPhone 17（iPhone18,3）。
+
 ## 1.2.27
 
 只改 `hw.machine` 过不了风控。抓包里同一台手机会被这些值认出来：32 位 `deviceId` / `deviceFingerprint`、`tag.devices`、`tag.api`、钥匙串里的旧设备项，以及 Cookie `SPC_F` / `SPC_DID`。1.2.27 在保持机型伪装和系统版本不从 `sysctl` 改写的前提下，轮换 IDFV、IDFA、序列号和这组指纹；首次安装模式下，旧的设备钥匙串读不到，设备 Cookie 换成新的 32 位 HEX。账号 Cookie 不动。

@@ -32,7 +32,7 @@ static NSString *gDSPSeenMachine = nil;
 
 static void DSPWriteLoadMarker(void) {
     NSDictionary *info = @{
-        @"version" : @"1.2.27",
+        @"version" : @"1.2.28",
         @"bundle" : [[NSBundle mainBundle] bundleIdentifier] ?: @"",
         @"process" : [[NSProcessInfo processInfo] processName] ?: @"",
         @"productType" : [DSPProfile productType],

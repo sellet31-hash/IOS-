@@ -19,6 +19,9 @@ AppBackup_FILES := \
 	src/ABAppListViewController.m \
 	src/ABAppDetailViewController.m \
 	src/ABBackupListViewController.m \
+	src/ABDeviceCatalog.m \
+	src/ABDeviceStore.m \
+	src/ABDeviceViewController.m \
 	src/abtar.c
 
 AppBackup_FRAMEWORKS := UIKit CoreGraphics QuartzCore
