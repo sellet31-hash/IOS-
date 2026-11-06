@@ -30,9 +30,12 @@ fi
 dir=$(dirname "$src")
 cp -f "$dir/DeviceSpoof.dylib" "$dir/DeviceSpoof.plist" "$libs/"
 
-if [ -L "$inject" ]; then
-	rm -f "$inject"
+if [ -L "$inject" ] || [ "$inject" -ef "$libs" ]; then
+	cp -f "$libs/DeviceSpoof.dylib" "$libs/DeviceSpoof.plist" "$inject/" 2>/dev/null || true
+	ls -ld "$inject" "$inject/DeviceSpoof.dylib" >> "$log"
+	exit 0
 fi
+
 mkdir -p "$inject"
 cp -f "$libs/DeviceSpoof.dylib" "$libs/DeviceSpoof.plist" "$inject/"
 ls -ld "$inject" "$inject/DeviceSpoof.dylib" >> "$log"

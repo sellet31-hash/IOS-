@@ -1,9 +1,9 @@
 #import <Foundation/Foundation.h>
 #import <CoreFoundation/CoreFoundation.h>
-#import <Security/Security.h>
 #import <UIKit/UIKit.h>
 #import <substrate.h>
 #import <dlfcn.h>
+#import <fcntl.h>
 #import <mach-o/dyld.h>
 #import <mach-o/loader.h>
 #import <mach/mach.h>
@@ -11,7 +11,7 @@
 #import <stdio.h>
 #import <stdlib.h>
 #import <string.h>
-#import <sys/syscall.h>
+#import <sys/stat.h>
 #import <sys/sysctl.h>
 #import <sys/utsname.h>
 #import <unistd.h>
@@ -23,30 +23,13 @@
 #define VM_PROT_COPY 0x10
 #endif
 
-typedef struct {
-    void *target;
-    void *replacement;
-} DSPBind;
-
 static void DSPPrepareAnswers(void);
-static void DSPInstallInlineHooks(void);
 
 static CFTypeRef (*orig_MGCopyAnswer)(CFStringRef);
 static int (*orig_sysctlbyname)(const char *, void *, size_t *, void *, size_t);
 static int (*orig_sysctl)(int *, unsigned int, void *, size_t *, void *, size_t);
 static int (*orig_uname)(struct utsname *);
 static void *(*orig_dlsym)(void *, const char *);
-static OSStatus (*orig_SecItemCopyMatching)(CFDictionaryRef, CFTypeRef *);
-static int (*orig_syscall)(int, long, long, long, long, long, long);
-static const void *(*orig_CFDictionaryGetValue)(CFDictionaryRef, const void *);
-static void *gDSPTargetMGCopyAnswer;
-static void *gDSPTargetSysctlbyname;
-static void *gDSPTargetSysctl;
-static void *gDSPTargetUname;
-static void *gDSPTargetDlsym;
-static void *gDSPTargetSecItem;
-static void *gDSPTargetSyscall;
-static void *gDSPTargetCFDictionaryGetValue;
 static __thread int gDSPSysctlbynameDepth;
 static __thread int gDSPSysctlDepth;
 static __thread int gDSPUnameDepth;
@@ -74,25 +57,23 @@ static CFStringRef kDSPMarketingNameValue;
 static const char *kDSPMachineUTF8;
 static const char *kDSPModelUTF8;
 static const char *kDSPIOSVersionUTF8;
-static unsigned int gDSPBindCount = 0;
-static DSPBind gDSPBinds[10];
 static uint32_t gDSPReboundSlots = 0;
 static uint32_t gDSPProtectFails = 0;
 static uint32_t gDSPImagesSeen = 0;
+static uint32_t gDSPChainSteps = 0;
 static BOOL gDSPAnswersReady = NO;
-static BOOL gDSPRealMachineCaptured = NO;
 
 static void DSPWriteLoadMarker(void) {
     NSDictionary *info = @{
-        @"version" : @"1.2.22",
+        @"version" : @"1.2.23",
         @"bundle" : [[NSBundle mainBundle] bundleIdentifier] ?: @"",
         @"process" : [[NSProcessInfo processInfo] processName] ?: @"",
         @"productType" : [DSPProfile productType],
         @"marketingName" : [DSPProfile marketingName],
         @"enabled" : @([DSPProfile isSpoofEnabled]),
-        @"hookSysctl" : @(orig_sysctlbyname != NULL && (void *)orig_sysctlbyname != gDSPTargetSysctlbyname),
-        @"hookUname" : @(orig_uname != NULL && (void *)orig_uname != gDSPTargetUname),
-        @"hookGestalt" : @(orig_MGCopyAnswer != NULL && (void *)orig_MGCopyAnswer != gDSPTargetMGCopyAnswer),
+        @"hookSysctl" : @(orig_sysctlbyname != NULL && gDSPReboundSlots > 0),
+        @"hookUname" : @(orig_uname != NULL && gDSPReboundSlots > 0),
+        @"hookGestalt" : @(orig_MGCopyAnswer != NULL && gDSPReboundSlots > 0),
         @"reboundSlots" : @(gDSPReboundSlots),
         @"protectFails" : @(gDSPProtectFails),
         @"imagesSeen" : @(gDSPImagesSeen),
@@ -160,48 +141,6 @@ static CFStringRef DSPAnswer(CFStringRef property) {
         return kDSPMarketingNameValue;
     }
     return NULL;
-}
-
-static BOOL DSPAttrContainsNeedle(CFDictionaryRef query, CFStringRef attrKey) {
-    CFTypeRef value = CFDictionaryGetValue(query, attrKey);
-    if (!value || CFGetTypeID(value) != CFStringGetTypeID()) {
-        return NO;
-    }
-    NSString *lower = [(__bridge NSString *)value lowercaseString];
-    NSArray<NSString *> *needles = @[
-        @"device", @"fingerprint", @"install", @"visitor", @"distinct", @"shopee",
-        @"machine", @"hardware", @"devid", @"uuid", @"client", @"track"
-    ];
-    for (NSString *needle in needles) {
-        if ([lower containsString:needle]) {
-            return YES;
-        }
-    }
-    return NO;
-}
-
-static BOOL DSPQueryIsPersistedDeviceSecret(CFDictionaryRef query) {
-    if (!query || ![DSPProfile simulateFreshInstall]) {
-        return NO;
-    }
-    CFTypeRef klass = CFDictionaryGetValue(query, kSecClass);
-    if (klass == kSecClassCertificate || klass == kSecClassIdentity) {
-        return NO;
-    }
-    return DSPAttrContainsNeedle(query, kSecAttrAccount) ||
-           DSPAttrContainsNeedle(query, kSecAttrService) ||
-           DSPAttrContainsNeedle(query, kSecAttrLabel) ||
-           DSPAttrContainsNeedle(query, kSecAttrGeneric);
-}
-
-static OSStatus DSP_SecItemCopyMatching(CFDictionaryRef query, CFTypeRef *result) {
-    if (DSPQueryIsPersistedDeviceSecret(query)) {
-        if (result) {
-            *result = NULL;
-        }
-        return errSecItemNotFound;
-    }
-    return orig_SecItemCopyMatching ? orig_SecItemCopyMatching(query, result) : errSecParam;
 }
 
 static CFTypeRef DSP_MGCopyAnswer(CFStringRef property) {
@@ -295,79 +234,6 @@ static int DSP_sysctl(int *name, unsigned int namelen, void *oldp, size_t *oldle
     return result;
 }
 
-static int DSP_syscall(int number, long arg1, long arg2, long arg3, long arg4, long arg5, long arg6) {
-    int result = orig_syscall ? orig_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6) : -1;
-#ifndef SYS_sysctl
-#define SYS_sysctl 202
-#endif
-    if (number != SYS_sysctl || result != 0 || arg1 == 0 || arg3 == 0 || arg4 == 0) {
-        return result;
-    }
-    int *name = (int *)(uintptr_t)arg1;
-    unsigned int namelen = (unsigned int)arg2;
-    void *oldp = (void *)(uintptr_t)arg3;
-    size_t *oldlenp = (size_t *)(uintptr_t)arg4;
-    if (!name || namelen < 2 || name[0] != CTL_HW) {
-        return result;
-    }
-    const char *spoof = NULL;
-    if (name[1] == HW_MACHINE && kDSPMachineUTF8) {
-        spoof = kDSPMachineUTF8;
-    } else if (name[1] == HW_MODEL && kDSPModelUTF8) {
-        spoof = kDSPModelUTF8;
-    }
-    if (!spoof) {
-        return result;
-    }
-    size_t need = strlen(spoof) + 1;
-    if (*oldlenp < need) {
-        return result;
-    }
-    memcpy(oldp, spoof, need);
-    *oldlenp = need;
-    return result;
-}
-
-static BOOL DSPCStringIsMachineID(const char *text) {
-    const char *comma;
-    if (!text || strncmp(text, "iPhone", 6) != 0) {
-        return NO;
-    }
-    comma = strchr(text, ',');
-    return comma != NULL && comma[1] >= '0' && comma[1] <= '9';
-}
-
-static const void *DSP_CFDictionaryGetValue(CFDictionaryRef theDict, const void *key) {
-    const void *value = orig_CFDictionaryGetValue ? orig_CFDictionaryGetValue(theDict, key) : NULL;
-    char keyBuf[24];
-    char valueBuf[80];
-    if (!value || !key || ![DSPProfile isSpoofEnabled]) {
-        return value;
-    }
-    if (CFGetTypeID((CFTypeRef)key) != CFStringGetTypeID() || CFGetTypeID((CFTypeRef)value) != CFStringGetTypeID()) {
-        return value;
-    }
-    if (!CFStringGetCString((CFStringRef)key, keyBuf, (CFIndex)sizeof(keyBuf), kCFStringEncodingASCII)) {
-        return value;
-    }
-    if (!DSPCStringIsMachineID(keyBuf)) {
-        return value;
-    }
-    if (!CFStringGetCString((CFStringRef)value, valueBuf, (CFIndex)sizeof(valueBuf), kCFStringEncodingUTF8)) {
-        return value;
-    }
-    if (!strstr(valueBuf, "iPhone") && !strstr(valueBuf, "iPad")) {
-        return value;
-    }
-    if (strstr(valueBuf, "Apple") != NULL) {
-        return (__bridge const void *)@"Apple iPhone 17";
-    }
-    if (strchr(valueBuf, ',') != NULL) {
-        return (__bridge const void *)@"iPhone18,3";
-    }
-    return (__bridge const void *)@"iPhone 17";
-}
-
 static int DSP_uname(struct utsname *buffer) {
     if (!orig_uname) {
         errno = ENOSYS;
@@ -400,24 +266,8 @@ static void *DSP_dlsym(void *handle, const char *symbol) {
         if (strcmp(symbol, "uname") == 0 && orig_uname) {
             return (void *)DSP_uname;
         }
-        if (strcmp(symbol, "SecItemCopyMatching") == 0 && orig_SecItemCopyMatching) {
-            return (void *)DSP_SecItemCopyMatching;
-        }
     }
-    return orig_dlsym ? orig_dlsym(handle, symbol) : NULL;
-}
-
-static BOOL DSPImageCanBePatched(const char *path) {
-    if (!path || path[0] == '\0') {
-        return NO;
-    }
-    if (strncmp(path, "/System/", 8) == 0 || strncmp(path, "/usr/lib/", 9) == 0) {
-        return NO;
-    }
-    if (strstr(path, "DeviceSpoof") || strstr(path, "libsubstrate") || strstr(path, "libellekit") || strstr(path, "libsystem") || strstr(path, "Substitute")) {
-        return NO;
-    }
-    return YES;
+    return orig_dlsym ? orig_dlsym(handle, symbol) : dlsym(handle, symbol);
 }
 
 static void DSPWriteSlot(void **slot, void *replacement) {
@@ -432,111 +282,6 @@ static void DSPWriteSlot(void **slot, void *replacement) {
         gDSPReboundSlots++;
     } else {
         gDSPProtectFails++;
-    }
-}
-
-static void DSPRebindImage(const struct mach_header *header, intptr_t slide, const DSPBind *binds, unsigned int bindCount) {
-    if (!header || header->magic != MH_MAGIC_64 || !binds || bindCount == 0) {
-        return;
-    }
-    const struct mach_header_64 *header64 = (const struct mach_header_64 *)header;
-    uintptr_t cursor = (uintptr_t)header64 + sizeof(*header64);
-    for (uint32_t commandIndex = 0; commandIndex < header64->ncmds; commandIndex++) {
-        const struct load_command *command = (const struct load_command *)cursor;
-        if (command->cmdsize < sizeof(*command) || cursor + command->cmdsize < cursor) {
-            return;
-        }
-        if (command->cmd == LC_SEGMENT_64) {
-            const struct segment_command_64 *segment = (const struct segment_command_64 *)command;
-            if (strcmp(segment->segname, "__DATA") == 0 || strcmp(segment->segname, "__DATA_CONST") == 0) {
-                const struct section_64 *section = (const struct section_64 *)(segment + 1);
-                for (uint32_t sectionIndex = 0; sectionIndex < segment->nsects; sectionIndex++, section++) {
-                    uint32_t type = section->flags & SECTION_TYPE;
-                    if (type == S_ZEROFILL || type == S_GB_ZEROFILL || type == S_THREAD_LOCAL_ZEROFILL || section->size < sizeof(void *)) {
-                        continue;
-                    }
-                    uintptr_t start = (uintptr_t)(section->addr + slide);
-                    uintptr_t end = start + (uintptr_t)section->size;
-                    start &= ~(uintptr_t)(sizeof(void *) - 1);
-                    for (uintptr_t address = start; address + sizeof(void *) <= end; address += sizeof(void *)) {
-                        void **slot = (void **)address;
-                        void *value = *slot;
-                        for (unsigned int bindIndex = 0; bindIndex < bindCount; bindIndex++) {
-                            if (value == binds[bindIndex].target && binds[bindIndex].target != binds[bindIndex].replacement) {
-                                DSPWriteSlot(slot, binds[bindIndex].replacement);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        cursor += command->cmdsize;
-    }
-}
-
-static void DSPRebuildBindTable(void) {
-    gDSPBindCount = 0;
-    if (gDSPTargetMGCopyAnswer && orig_MGCopyAnswer) {
-        gDSPBinds[gDSPBindCount++] = (DSPBind){gDSPTargetMGCopyAnswer, (void *)DSP_MGCopyAnswer};
-    }
-    if (gDSPTargetSysctlbyname && orig_sysctlbyname) {
-        gDSPBinds[gDSPBindCount++] = (DSPBind){gDSPTargetSysctlbyname, (void *)DSP_sysctlbyname};
-    }
-    if (gDSPTargetSysctl && orig_sysctl) {
-        gDSPBinds[gDSPBindCount++] = (DSPBind){gDSPTargetSysctl, (void *)DSP_sysctl};
-    }
-    if (gDSPTargetUname && orig_uname) {
-        gDSPBinds[gDSPBindCount++] = (DSPBind){gDSPTargetUname, (void *)DSP_uname};
-    }
-    if (gDSPTargetDlsym && orig_dlsym) {
-        gDSPBinds[gDSPBindCount++] = (DSPBind){gDSPTargetDlsym, (void *)DSP_dlsym};
-    }
-    if (gDSPTargetSecItem && orig_SecItemCopyMatching) {
-        gDSPBinds[gDSPBindCount++] = (DSPBind){gDSPTargetSecItem, (void *)DSP_SecItemCopyMatching};
-    }
-    if (gDSPTargetSyscall && orig_syscall) {
-        gDSPBinds[gDSPBindCount++] = (DSPBind){gDSPTargetSyscall, (void *)DSP_syscall};
-    }
-    if (gDSPTargetCFDictionaryGetValue && orig_CFDictionaryGetValue) {
-        gDSPBinds[gDSPBindCount++] = (DSPBind){gDSPTargetCFDictionaryGetValue, (void *)DSP_CFDictionaryGetValue};
-    }
-}
-
-static void DSPRebindOneImage(const struct mach_header *header, intptr_t slide, const char *name) {
-    if (!header || gDSPBindCount == 0) {
-        return;
-    }
-    if (name && !DSPImageCanBePatched(name)) {
-        return;
-    }
-    gDSPImagesSeen++;
-    DSPRebindImage(header, slide, gDSPBinds, gDSPBindCount);
-}
-
-static void DSPDyldImageAdded(const struct mach_header *header, intptr_t slide) {
-    if (![DSPProfile isSpoofEnabled]) {
-        return;
-    }
-    const char *name = NULL;
-    uint32_t imageCount = _dyld_image_count();
-    for (uint32_t index = 0; index < imageCount; index++) {
-        if (_dyld_get_image_header(index) == header) {
-            name = _dyld_get_image_name(index);
-            break;
-        }
-    }
-    DSPRebindOneImage(header, slide, name);
-}
-
-static void DSPRebindLoadedImages(void) {
-    DSPRebuildBindTable();
-    if (gDSPBindCount == 0) {
-        return;
-    }
-    uint32_t imageCount = _dyld_image_count();
-    for (uint32_t index = 0; index < imageCount; index++) {
-        DSPRebindOneImage(_dyld_get_image_header(index), _dyld_get_image_vmaddr_slide(index), _dyld_get_image_name(index));
     }
 }
 
@@ -794,88 +539,68 @@ __attribute__((constructor(1))) static void DSPEarlyLoadNote(void) {
 
 %end
 
-static void *DSPResolveSymbol(const char *name, void *linked) {
-    void *resolved = name ? dlsym(RTLD_DEFAULT, name) : NULL;
-    return resolved ? resolved : linked;
-}
-
-typedef void (*DSPMSHookFunction)(void *symbol, void *replacement, void **original);
-
-static DSPMSHookFunction DSPFindMSHook(void) {
-    DSPMSHookFunction found = (DSPMSHookFunction)dlsym(RTLD_DEFAULT, "MSHookFunction");
-    return found ? found : MSHookFunction;
-}
-
-static BOOL DSPHookLinked(void *symbol, void *replacement, void **original) {
-    if (!symbol || !replacement || !original) {
-        return NO;
-    }
-    if (*original && *original != symbol && *original != replacement) {
-        return YES;
-    }
-    void *previous = NULL;
-    DSPMSHookFunction hook = DSPFindMSHook();
-    if (hook) {
-        hook(symbol, replacement, &previous);
-    }
-    if (previous && previous != symbol && previous != replacement) {
-        *original = previous;
-        return YES;
-    }
-    *original = symbol;
-    return NO;
-}
-
-static void DSPInstallInlineHooks(void) {
-    if (!gDSPRealMachineCaptured) {
-        char realMachine[32] = {0};
-        size_t realMachineLength = sizeof(realMachine);
-        if (sysctlbyname("hw.machine", realMachine, &realMachineLength, NULL, 0) == 0 && realMachine[0]) {
-            [DSPProfile captureRealMachine:realMachine];
-            gDSPRealMachineCaptured = YES;
-        }
-    }
-
-    gDSPTargetSysctlbyname = DSPResolveSymbol("sysctlbyname", (void *)sysctlbyname);
-    gDSPTargetSysctl = DSPResolveSymbol("sysctl", (void *)sysctl);
-    gDSPTargetUname = DSPResolveSymbol("uname", (void *)uname);
-    gDSPTargetDlsym = DSPResolveSymbol("dlsym", (void *)dlsym);
-    gDSPTargetSecItem = DSPResolveSymbol("SecItemCopyMatching", (void *)SecItemCopyMatching);
-    gDSPTargetSyscall = dlsym(RTLD_DEFAULT, "syscall");
-
-    void *gestalt = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
-    if (!gestalt) {
-        gestalt = dlopen("/System/Library/Frameworks/MobileGestalt.framework/MobileGestalt", RTLD_LAZY);
-    }
-    if (gestalt) {
-        gDSPTargetMGCopyAnswer = dlsym(gestalt, "MGCopyAnswer");
-    }
-    if (!gDSPTargetMGCopyAnswer) {
-        gDSPTargetMGCopyAnswer = dlsym(RTLD_DEFAULT, "MGCopyAnswer");
-    }
-
-    DSPHookLinked(gDSPTargetSysctlbyname, (void *)DSP_sysctlbyname, (void **)&orig_sysctlbyname);
-    DSPHookLinked(gDSPTargetSysctl, (void *)DSP_sysctl, (void **)&orig_sysctl);
-    DSPHookLinked(gDSPTargetUname, (void *)DSP_uname, (void **)&orig_uname);
-    DSPHookLinked(gDSPTargetSecItem, (void *)DSP_SecItemCopyMatching, (void **)&orig_SecItemCopyMatching);
-    DSPHookLinked(gDSPTargetMGCopyAnswer, (void *)DSP_MGCopyAnswer, (void **)&orig_MGCopyAnswer);
-    DSPHookLinked(gDSPTargetSyscall, (void *)DSP_syscall, (void **)&orig_syscall);
-    gDSPTargetCFDictionaryGetValue = DSPResolveSymbol("CFDictionaryGetValue", (void *)CFDictionaryGetValue);
-    DSPHookLinked(gDSPTargetCFDictionaryGetValue, (void *)DSP_CFDictionaryGetValue, (void **)&orig_CFDictionaryGetValue);
-}
-
 static BOOL DSPImportNameMatches(const char *name, const char **canonical) {
-    if (!name) {
+    if (!name || !canonical) {
         return NO;
     }
     if (name[0] == '_') {
         name++;
     }
-    if (strcmp(name, "sysctlbyname") == 0 || strcmp(name, "sysctl") == 0 || strcmp(name, "uname") == 0) {
+    if (strcmp(name, "sysctlbyname") == 0 || strcmp(name, "sysctl") == 0 || strcmp(name, "uname") == 0 ||
+        strcmp(name, "dlsym") == 0 || strcmp(name, "MGCopyAnswer") == 0) {
         *canonical = name;
         return YES;
     }
     return NO;
+}
+
+static void *DSPRealSymbol(const char *canonical) {
+    void *found = canonical ? dlsym(RTLD_DEFAULT, canonical) : NULL;
+    if (found || !canonical || strcmp(canonical, "MGCopyAnswer") != 0) {
+        return found;
+    }
+    void *gestalt = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
+    if (!gestalt) {
+        gestalt = dlopen("/System/Library/Frameworks/MobileGestalt.framework/MobileGestalt", RTLD_LAZY);
+    }
+    return gestalt ? dlsym(gestalt, "MGCopyAnswer") : NULL;
+}
+
+static void DSPPatchNamedSymbol(const char *canonical, void **slot) {
+    void *replacement = NULL;
+    void **original = NULL;
+    if (!canonical || !slot) {
+        return;
+    }
+    if (strcmp(canonical, "sysctlbyname") == 0) {
+        replacement = (void *)DSP_sysctlbyname;
+        original = (void **)&orig_sysctlbyname;
+    } else if (strcmp(canonical, "sysctl") == 0) {
+        replacement = (void *)DSP_sysctl;
+        original = (void **)&orig_sysctl;
+    } else if (strcmp(canonical, "uname") == 0) {
+        replacement = (void *)DSP_uname;
+        original = (void **)&orig_uname;
+    } else if (strcmp(canonical, "dlsym") == 0) {
+        replacement = (void *)DSP_dlsym;
+        original = (void **)&orig_dlsym;
+    } else if (strcmp(canonical, "MGCopyAnswer") == 0) {
+        replacement = (void *)DSP_MGCopyAnswer;
+        original = (void **)&orig_MGCopyAnswer;
+    }
+    if (!replacement || !original || *slot == replacement) {
+        return;
+    }
+    if (!*original) {
+        *original = DSPRealSymbol(canonical);
+    }
+    if (!*original || *original == replacement) {
+        return;
+    }
+    if (*slot != *original) {
+        return;
+    }
+    DSPWriteSlot(slot, replacement);
 }
 
 static void DSPRebindNamedImports(const struct mach_header *header, intptr_t slide) {
@@ -932,6 +657,9 @@ static void DSPRebindNamedImports(const struct mach_header *header, intptr_t sli
                     continue;
                 }
                 uint32_t count = (uint32_t)(section->size / sizeof(void *));
+                if (count == 0 || section->reserved1 > dysymtab->nindirectsyms || count > dysymtab->nindirectsyms - section->reserved1) {
+                    continue;
+                }
                 void **slots = (void **)(section->addr + slide);
                 for (uint32_t index = 0; index < count; index++) {
                     uint32_t symbolIndex = indirect[section->reserved1 + index];
@@ -949,27 +677,7 @@ static void DSPRebindNamedImports(const struct mach_header *header, intptr_t sli
                     if (!DSPImportNameMatches(strings + stringIndex, &canonical)) {
                         continue;
                     }
-                    void *replacement = NULL;
-                    void **original = NULL;
-                    if (strcmp(canonical, "sysctlbyname") == 0) {
-                        replacement = (void *)DSP_sysctlbyname;
-                        original = (void **)&orig_sysctlbyname;
-                    } else if (strcmp(canonical, "sysctl") == 0) {
-                        replacement = (void *)DSP_sysctl;
-                        original = (void **)&orig_sysctl;
-                    } else if (strcmp(canonical, "uname") == 0) {
-                        replacement = (void *)DSP_uname;
-                        original = (void **)&orig_uname;
-                    }
-                    if (!replacement || !original) {
-                        continue;
-                    }
-                    if (!*original) {
-                        *original = dlsym(RTLD_DEFAULT, canonical);
-                    }
-                    if (*original && *original != replacement) {
-                        DSPWriteSlot(&slots[index], replacement);
-                    }
+                    DSPPatchNamedSymbol(canonical, &slots[index]);
                 }
             }
         }
@@ -977,15 +685,354 @@ static void DSPRebindNamedImports(const struct mach_header *header, intptr_t sli
     }
 }
 
+#ifndef LC_DYLD_CHAINED_FIXUPS
+#define LC_DYLD_CHAINED_FIXUPS 0x80000034u
+#endif
+
+static BOOL DSPReadAt(int fd, off_t offset, void *buffer, size_t length) {
+    uint8_t *out = buffer;
+    size_t done = 0;
+    if (offset < 0) {
+        return NO;
+    }
+    while (done < length) {
+        ssize_t count = pread(fd, out + done, length - done, offset + (off_t)done);
+        if (count <= 0) {
+            return NO;
+        }
+        done += (size_t)count;
+    }
+    return YES;
+}
+
+static uint32_t DSPSwap32(uint32_t value) {
+    return (value >> 24) | ((value >> 8) & 0xff00) | ((value << 8) & 0xff0000) | (value << 24);
+}
+
+static BOOL DSPChainedSymbol(const uint8_t *blob, uint32_t blobSize, uint32_t importsOffset, uint32_t symbolsOffset, uint32_t importsCount, uint32_t importsFormat, uint32_t ordinal, char *out, size_t outSize) {
+    uint32_t nameOffset = 0;
+    uint32_t entryOffset = 0;
+    if (!blob || !out || outSize < 2 || ordinal >= importsCount) {
+        return NO;
+    }
+    if (importsFormat == 1) {
+        entryOffset = importsOffset + ordinal * 4;
+        if (entryOffset + 4 > blobSize) {
+            return NO;
+        }
+        uint32_t entry = 0;
+        memcpy(&entry, blob + entryOffset, sizeof(entry));
+        nameOffset = entry >> 9;
+    } else if (importsFormat == 2) {
+        entryOffset = importsOffset + ordinal * 8;
+        if (entryOffset + 4 > blobSize) {
+            return NO;
+        }
+        uint32_t entry = 0;
+        memcpy(&entry, blob + entryOffset, sizeof(entry));
+        nameOffset = entry >> 9;
+    } else if (importsFormat == 3) {
+        entryOffset = importsOffset + ordinal * 16;
+        if (entryOffset + 8 > blobSize) {
+            return NO;
+        }
+        uint64_t entry = 0;
+        memcpy(&entry, blob + entryOffset, sizeof(entry));
+        nameOffset = (uint32_t)(entry >> 32);
+    } else {
+        return NO;
+    }
+    if (symbolsOffset > blobSize || nameOffset > blobSize - symbolsOffset) {
+        return NO;
+    }
+    const char *source = (const char *)blob + symbolsOffset + nameOffset;
+    size_t limit = blobSize - (symbolsOffset + nameOffset);
+    size_t length = 0;
+    while (length < limit && source[length] != '\0') {
+        length++;
+    }
+    if (length == 0 || length >= limit || length >= outSize) {
+        return NO;
+    }
+    memcpy(out, source, length);
+    out[length] = '\0';
+    return YES;
+}
+
+static void DSPWalkFixupChain(int fd, off_t slice, off_t fileSize, const struct mach_header *header, const struct segment_command_64 *segment, uint64_t textVm, uint64_t position, uint16_t pointerFormat, const uint8_t *blob, uint32_t blobSize, uint32_t importsOffset, uint32_t symbolsOffset, uint32_t importsCount, uint32_t importsFormat) {
+    uint32_t stride = (pointerFormat == 2 || pointerFormat == 6) ? 4 : 0;
+    if (!fd || !header || !segment || textVm == 0 || stride == 0 || segment->vmaddr < textVm) {
+        return;
+    }
+    for (uint32_t step = 0; step < 200000 && gDSPChainSteps < 25000; step++, gDSPChainSteps++) {
+        if (position + sizeof(uint64_t) > segment->filesize || position + sizeof(uint64_t) > segment->vmsize) {
+            return;
+        }
+        off_t fileOffset = slice + (off_t)segment->fileoff + (off_t)position;
+        uint64_t raw = 0;
+        if (fileOffset < slice || fileOffset + (off_t)sizeof(raw) > fileSize || !DSPReadAt(fd, fileOffset, &raw, sizeof(raw))) {
+            return;
+        }
+        if ((raw >> 63) != 0) {
+            char symbol[96];
+            const char *canonical = NULL;
+            if (DSPChainedSymbol(blob, blobSize, importsOffset, symbolsOffset, importsCount, importsFormat, (uint32_t)(raw & 0xffffffu), symbol, sizeof(symbol)) &&
+                DSPImportNameMatches(symbol, &canonical)) {
+                uintptr_t slotAddress = (uintptr_t)header + (uintptr_t)(segment->vmaddr - textVm) + (uintptr_t)position;
+                if ((slotAddress & (sizeof(void *) - 1)) == 0) {
+                    DSPPatchNamedSymbol(canonical, (void **)slotAddress);
+                }
+            }
+        }
+        uint32_t next = (uint32_t)((raw >> 51) & 0xfffu);
+        if (next == 0) {
+            return;
+        }
+        uint64_t delta = (uint64_t)next * stride;
+        if (position + delta < position) {
+            return;
+        }
+        position += delta;
+    }
+}
+
+static void DSPRebindChainedFixups(const struct mach_header *header, const char *path) {
+    int fd = -1;
+    uint8_t *commands = NULL;
+    uint8_t *blob = NULL;
+    struct mach_header_64 mach;
+    struct stat info;
+    uint32_t magic = 0;
+    off_t slice = 0;
+    if (!header || header->magic != MH_MAGIC_64 || !path || path[0] != '/') {
+        return;
+    }
+    fd = open(path, O_RDONLY);
+    if (fd < 0 || fstat(fd, &info) != 0 || info.st_size < (off_t)sizeof(mach)) {
+        if (fd >= 0) {
+            close(fd);
+        }
+        return;
+    }
+    if (!DSPReadAt(fd, 0, &magic, sizeof(magic))) {
+        close(fd);
+        return;
+    }
+    if (magic == 0xBEBAFECAu || magic == 0xCAFEBABEu) {
+        uint32_t archCount = 0;
+        BOOL found = NO;
+        BOOL swap = (magic == 0xBEBAFECAu);
+        if (!DSPReadAt(fd, 4, &archCount, sizeof(archCount))) {
+            close(fd);
+            return;
+        }
+        if (swap) {
+            archCount = DSPSwap32(archCount);
+        }
+        if (archCount == 0 || archCount > 8) {
+            close(fd);
+            return;
+        }
+        for (uint32_t arch = 0; arch < archCount; arch++) {
+            uint32_t fields[5];
+            if (!DSPReadAt(fd, 8 + (off_t)arch * 20, fields, sizeof(fields))) {
+                close(fd);
+                return;
+            }
+            if (swap) {
+                for (int field = 0; field < 5; field++) {
+                    fields[field] = DSPSwap32(fields[field]);
+                }
+            }
+            if (fields[0] == 0x0100000Cu) {
+                slice = (off_t)fields[2];
+                found = YES;
+                break;
+            }
+        }
+        if (!found) {
+            close(fd);
+            return;
+        }
+    }
+    if (!DSPReadAt(fd, slice, &mach, sizeof(mach)) || mach.magic != MH_MAGIC_64 || mach.sizeofcmds > 1024 * 1024) {
+        close(fd);
+        return;
+    }
+    commands = malloc(mach.sizeofcmds);
+    if (!commands || !DSPReadAt(fd, slice + (off_t)sizeof(mach), commands, mach.sizeofcmds)) {
+        free(commands);
+        close(fd);
+        return;
+    }
+    uint64_t textVm = 0;
+    uint32_t fixupOffset = 0;
+    uint32_t fixupSize = 0;
+    uint32_t cursor = 0;
+    for (uint32_t commandIndex = 0; commandIndex < mach.ncmds && cursor + sizeof(struct load_command) <= mach.sizeofcmds; commandIndex++) {
+        struct load_command command;
+        memcpy(&command, commands + cursor, sizeof(command));
+        if (command.cmdsize < sizeof(command) || cursor + command.cmdsize > mach.sizeofcmds) {
+            break;
+        }
+        if (command.cmd == LC_SEGMENT_64 && command.cmdsize >= sizeof(struct segment_command_64)) {
+            struct segment_command_64 segment;
+            memcpy(&segment, commands + cursor, sizeof(segment));
+            if (textVm == 0 && strcmp(segment.segname, "__TEXT") == 0) {
+                textVm = segment.vmaddr;
+            }
+        } else if (command.cmd == LC_DYLD_CHAINED_FIXUPS && command.cmdsize >= 16) {
+            memcpy(&fixupOffset, commands + cursor + 8, sizeof(fixupOffset));
+            memcpy(&fixupSize, commands + cursor + 12, sizeof(fixupSize));
+        }
+        cursor += command.cmdsize;
+    }
+    if (textVm == 0 || fixupSize < 28 || fixupSize > 8 * 1024 * 1024 || slice + (off_t)fixupOffset + (off_t)fixupSize > info.st_size) {
+        free(commands);
+        close(fd);
+        return;
+    }
+    blob = malloc(fixupSize);
+    if (!blob || !DSPReadAt(fd, slice + (off_t)fixupOffset, blob, fixupSize)) {
+        free(blob);
+        free(commands);
+        close(fd);
+        return;
+    }
+    uint32_t startsOffset = 0;
+    uint32_t importsOffset = 0;
+    uint32_t symbolsOffset = 0;
+    uint32_t importsCount = 0;
+    uint32_t importsFormat = 0;
+    uint32_t symbolsFormat = 0;
+    memcpy(&startsOffset, blob + 4, sizeof(startsOffset));
+    memcpy(&importsOffset, blob + 8, sizeof(importsOffset));
+    memcpy(&symbolsOffset, blob + 12, sizeof(symbolsOffset));
+    memcpy(&importsCount, blob + 16, sizeof(importsCount));
+    memcpy(&importsFormat, blob + 20, sizeof(importsFormat));
+    memcpy(&symbolsFormat, blob + 24, sizeof(symbolsFormat));
+    if (symbolsFormat != 0 || importsCount > 1000000 || startsOffset > fixupSize || importsOffset > fixupSize || symbolsOffset > fixupSize) {
+        free(blob);
+        free(commands);
+        close(fd);
+        return;
+    }
+    uint32_t segmentCount = 0;
+    if (startsOffset + sizeof(segmentCount) > fixupSize) {
+        free(blob);
+        free(commands);
+        close(fd);
+        return;
+    }
+    memcpy(&segmentCount, blob + startsOffset, sizeof(segmentCount));
+    if (segmentCount == 0 || segmentCount > 64 || startsOffset + sizeof(segmentCount) + segmentCount * sizeof(uint32_t) > fixupSize) {
+        free(blob);
+        free(commands);
+        close(fd);
+        return;
+    }
+    uint32_t slotsAtStart = gDSPReboundSlots;
+    for (uint32_t segmentIndex = 0; segmentIndex < segmentCount && gDSPReboundSlots < slotsAtStart + 32; segmentIndex++) {
+        uint32_t infoOffset = 0;
+        memcpy(&infoOffset, blob + startsOffset + sizeof(uint32_t) + segmentIndex * sizeof(uint32_t), sizeof(infoOffset));
+        if (infoOffset == 0) {
+            continue;
+        }
+        uint32_t absolute = startsOffset + infoOffset;
+        uint32_t infoSize = 0;
+        uint16_t pageSize = 0;
+        uint16_t pointerFormat = 0;
+        uint64_t segmentOffset = 0;
+        uint16_t pageCount = 0;
+        if (absolute + 22 > fixupSize) {
+            continue;
+        }
+        memcpy(&infoSize, blob + absolute, sizeof(infoSize));
+        memcpy(&pageSize, blob + absolute + 4, sizeof(pageSize));
+        memcpy(&pointerFormat, blob + absolute + 6, sizeof(pointerFormat));
+        memcpy(&segmentOffset, blob + absolute + 8, sizeof(segmentOffset));
+        memcpy(&pageCount, blob + absolute + 20, sizeof(pageCount));
+        if (pageSize < sizeof(uint64_t) || pageCount > 100000 || infoSize < 22u + (uint32_t)pageCount * sizeof(uint16_t) || absolute + infoSize > fixupSize) {
+            continue;
+        }
+        struct segment_command_64 segment;
+        BOOL foundSegment = NO;
+        uint32_t segmentCursor = 0;
+        for (uint32_t commandIndex = 0; commandIndex < mach.ncmds && segmentCursor + sizeof(struct load_command) <= mach.sizeofcmds; commandIndex++) {
+            struct load_command command;
+            memcpy(&command, commands + segmentCursor, sizeof(command));
+            if (command.cmdsize < sizeof(command) || segmentCursor + command.cmdsize > mach.sizeofcmds) {
+                break;
+            }
+            if (command.cmd == LC_SEGMENT_64 && command.cmdsize >= sizeof(segment)) {
+                struct segment_command_64 candidate;
+                memcpy(&candidate, commands + segmentCursor, sizeof(candidate));
+                if (candidate.vmaddr >= textVm && candidate.vmaddr - textVm == segmentOffset) {
+                    segment = candidate;
+                    foundSegment = YES;
+                    break;
+                }
+            }
+            segmentCursor += command.cmdsize;
+        }
+        if (!foundSegment) {
+            continue;
+        }
+        uint32_t overflowCount = (infoSize - 22u - (uint32_t)pageCount * sizeof(uint16_t)) / sizeof(uint16_t);
+        for (uint16_t page = 0; page < pageCount && gDSPReboundSlots < slotsAtStart + 32 && gDSPChainSteps < 25000; page++) {
+            uint16_t start = 0;
+            memcpy(&start, blob + absolute + 22 + (uint32_t)page * sizeof(uint16_t), sizeof(start));
+            if (start == 0xFFFF || ((start & 0x8000) == 0 && start >= pageSize)) {
+                continue;
+            }
+            if (start & 0x8000) {
+                uint32_t overflowIndex = start & 0x7FFF;
+                while (overflowIndex < overflowCount && gDSPReboundSlots < slotsAtStart + 32 && gDSPChainSteps < 25000) {
+                    uint16_t entry = 0;
+                    memcpy(&entry, blob + absolute + 22 + (uint32_t)pageCount * sizeof(uint16_t) + overflowIndex * sizeof(uint16_t), sizeof(entry));
+                    overflowIndex++;
+                    if ((entry & 0x7FFF) >= pageSize) {
+                        break;
+                    }
+                    DSPWalkFixupChain(fd, slice, info.st_size, header, &segment, textVm, (uint64_t)page * pageSize + (entry & 0x7FFF), pointerFormat, blob, fixupSize, importsOffset, symbolsOffset, importsCount, importsFormat);
+                    if (entry & 0x8000) {
+                        break;
+                    }
+                }
+            } else {
+                DSPWalkFixupChain(fd, slice, info.st_size, header, &segment, textVm, (uint64_t)page * pageSize + start, pointerFormat, blob, fixupSize, importsOffset, symbolsOffset, importsCount, importsFormat);
+            }
+        }
+    }
+    free(blob);
+    free(commands);
+    close(fd);
+}
+
+static BOOL DSPPathIsShopeeImage(const char *path) {
+    if (!path || strstr(path, "DeviceSpoof") || strstr(path, "libellekit") || strstr(path, "libsubstrate")) {
+        return NO;
+    }
+    return strstr(path, "Shopee") != NULL || strstr(path, "shopee") != NULL;
+}
+
 static void DSPRebindShopeeImports(void) {
     uint32_t count = _dyld_image_count();
-    for (uint32_t index = 0; index < count; index++) {
+    uint32_t patchedImages = 0;
+    gDSPChainSteps = 0;
+    for (uint32_t index = 0; index < count && patchedImages < 24 && gDSPChainSteps < 25000; index++) {
         const char *name = _dyld_get_image_name(index);
-        if (!name || !strstr(name, "ShopeeTW")) {
+        if ((index != 0 && !DSPPathIsShopeeImage(name)) || (name && (strncmp(name, "/System/", 8) == 0 || strncmp(name, "/usr/lib/", 9) == 0))) {
+            continue;
+        }
+        const struct mach_header *header = _dyld_get_image_header(index);
+        if (!header) {
             continue;
         }
         gDSPImagesSeen++;
-        DSPRebindNamedImports(_dyld_get_image_header(index), _dyld_get_image_vmaddr_slide(index));
+        patchedImages++;
+        DSPRebindNamedImports(header, _dyld_get_image_vmaddr_slide(index));
+        DSPRebindChainedFixups(header, name);
     }
 }
 
