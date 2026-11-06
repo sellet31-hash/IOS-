@@ -2,6 +2,12 @@
 
 仅在 **台湾虾皮** 进程内生效。目标：在不重刷 iOS 的前提下，尽量模拟 **「刷机后首次安装虾皮」** 时客户端会上报的安装实例 ID，而不是只改序列号。
 
+## 1.2.11
+
+1.2.10 安装失败：`unable to open '/var/jb/usr/lib/TweakInject/DeviceSpoof.dylib.dpkg-new'`。包里同时放了 `DynamicLibraries` 和 `TweakInject` 两份，而这台手机上 `TweakInject` 不存在（多巴胺上它经常是一个还没建好的符号链接），dpkg 就解不开。
+
+1.2.11 只安装到 `/var/jb/Library/MobileSubstrate/DynamicLibraries`。装完后如果 `TweakInject` 还不存在，postinst 会把它链接过去，不会再复制第二份。
+
 ## 1.2.10
 
 1.2.9 能编译，但机型不会真正变。`dlsym("sysctlbyname")` / `dlsym("uname")` 在共享缓存里可能是另一个别名，`MSHookFunction` 钩在那个地址上，虾皮继续调用自己链接到的入口，读到的仍是 `iPhone13,2`。

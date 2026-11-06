@@ -1,0 +1,10 @@
+#!/bin/sh
+inject="/var/jb/usr/lib/TweakInject"
+
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+	if [ -d "$inject" ] && [ ! -L "$inject" ]; then
+		rm -f "$inject/DeviceSpoof.dylib" "$inject/DeviceSpoof.plist"
+	fi
+fi
+
+exit 0

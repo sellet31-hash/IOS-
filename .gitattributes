@@ -1,3 +1,4 @@
 DeviceSpoof/Makefile text eol=lf
 DeviceSpoof/*.sh text eol=lf
+DeviceSpoof/layout/DEBIAN/* text eol=lf
 .github/workflows/*.yml text eol=lf

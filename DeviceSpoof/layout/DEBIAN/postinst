@@ -1,0 +1,23 @@
+#!/bin/sh
+src="/var/jb/Library/MobileSubstrate/DynamicLibraries"
+inject="/var/jb/usr/lib/TweakInject"
+
+if [ ! -f "$src/DeviceSpoof.dylib" ]; then
+	exit 0
+fi
+
+if [ -L "$inject" ]; then
+	exit 0
+fi
+
+if [ ! -e "$inject" ]; then
+	mkdir -p /var/jb/usr/lib
+	ln -s "$src" "$inject"
+	exit 0
+fi
+
+if [ -d "$inject" ]; then
+	cp -f "$src/DeviceSpoof.dylib" "$src/DeviceSpoof.plist" "$inject/"
+fi
+
+exit 0
