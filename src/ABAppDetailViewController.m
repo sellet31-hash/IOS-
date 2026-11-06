@@ -291,12 +291,25 @@
         return cell;
     }
     ABBackupInfo *backup = self.backups[indexPath.row];
-    cell.textLabel.textColor = UIColor.labelColor;
-    cell.textLabel.text = backup.preferredTitle;
-    cell.detailTextLabel.text = backup.summaryText;
-    cell.detailTextLabel.numberOfLines = 2;
+    ABBackupInfo *currentBackup = nil;
+    for (ABBackupInfo *item in self.backups) {
+        if (!item.lastUsedAt) {
+            continue;
+        }
+        if (!currentBackup || [item.lastUsedAt compare:currentBackup.lastUsedAt] == NSOrderedDescending) {
+            currentBackup = item;
+        }
+    }
+    BOOL current = currentBackup.fileURL.path.length > 0 && [backup.fileURL.path isEqualToString:currentBackup.fileURL.path];
+    UIListContentConfiguration *config = [UIListContentConfiguration subtitleCellConfiguration];
+    config.text = backup.preferredTitle;
+    config.secondaryText = current ? [@"当前使用 · " stringByAppendingString:backup.summaryText] : backup.summaryText;
+    config.secondaryTextProperties.color = current ? ABAccentColor() : UIColor.secondaryLabelColor;
+    config.secondaryTextProperties.numberOfLines = 2;
+    cell.contentConfiguration = config;
+    cell.accessoryType = current ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryDisclosureIndicator;
+    cell.tintColor = ABAccentColor();
     cell.selectionStyle = UITableViewCellSelectionStyleDefault;
-    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     return cell;
 }
 

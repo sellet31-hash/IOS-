@@ -94,17 +94,8 @@
 }
 
 + (void)confirmRestore:(ABBackupInfo *)backup fromViewController:(UIViewController *)controller sourceView:(UIView *)sourceView completion:(dispatch_block_t)completion {
-    NSString *when = ABFormatDate(backup.createdAt);
-    NSString *message = [NSString stringWithFormat:@"会先退出「%@」，再用「%@」覆盖它现在的数据。缓存会被清掉。此操作不能撤销。", backup.displayName, backup.preferredTitle];
-    if (when.length > 0) {
-        message = [message stringByAppendingFormat:@"\n这份备份创建于 %@。", when];
-    }
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"恢复应用数据" message:message preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"恢复" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
-        [self restoreBackup:backup fromViewController:controller completion:completion];
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    [self presentAlert:alert from:controller sourceView:sourceView];
+    (void)sourceView;
+    [self restoreBackup:backup fromViewController:controller completion:completion];
 }
 
 + (void)restoreBackup:(ABBackupInfo *)backup fromViewController:(UIViewController *)controller completion:(dispatch_block_t)completion {
@@ -112,6 +103,7 @@
     ABProgressOverlay *overlay = [ABProgressOverlay showInView:[self hostViewForController:controller] title:@"正在恢复" cancelHandler:^{
         [engine cancel];
     }];
+    [overlay setShowsOnlyProgress:YES];
     [engine restoreBackupAtURL:backup.fileURL bundleIdentifier:backup.bundleIdentifier progress:^(NSString *message, double fraction, uint64_t bytesDone, uint64_t bytesTotal) {
         [overlay updateMessage:message fraction:fraction bytesDone:bytesDone bytesTotal:bytesTotal];
     } completion:^(NSArray<NSString *> *warnings, NSError *error) {

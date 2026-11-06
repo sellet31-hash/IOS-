@@ -11,6 +11,8 @@
 @property (nonatomic, strong) UILabel *bytesLabel;
 @property (nonatomic, strong) UIButton *cancelButton;
 @property (nonatomic, strong) NSLayoutConstraint *cardWidth;
+@property (nonatomic, strong) NSLayoutConstraint *messageHeight;
+@property (nonatomic, strong) NSLayoutConstraint *bytesHeight;
 @property (nonatomic, copy) void (^cancelHandler)(void);
 @end
 
@@ -50,7 +52,7 @@
 
         UILabel *message = [UILabel new];
         message.translatesAutoresizingMaskIntoConstraints = NO;
-        message.font = [UIFont systemFontOfSize:13];
+        message.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
         message.textColor = UIColor.secondaryLabelColor;
         message.numberOfLines = 2;
         message.lineBreakMode = NSLineBreakByTruncatingMiddle;
@@ -61,6 +63,7 @@
         UIProgressView *progress = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
         progress.translatesAutoresizingMaskIntoConstraints = NO;
         progress.progressTintColor = ABAccentColor();
+        progress.trackTintColor = [UIColor tertiarySystemFillColor];
         [card addSubview:progress];
         self.progressView = progress;
 
@@ -80,6 +83,8 @@
         [card addSubview:cancel];
         self.cancelButton = cancel;
 
+        self.messageHeight = [message.heightAnchor constraintEqualToConstant:0];
+        self.bytesHeight = [bytes.heightAnchor constraintEqualToConstant:0];
         self.cardWidth = [card.widthAnchor constraintEqualToConstant:320];
         [NSLayoutConstraint activateConstraints:@[
             [card.centerXAnchor constraintEqualToAnchor:self.centerXAnchor],
@@ -118,7 +123,23 @@
     self.cardWidth.constant = MIN(360, MAX(260, available));
 }
 
+- (void)setShowsOnlyProgress:(BOOL)showsOnlyProgress {
+    self.messageLabel.hidden = showsOnlyProgress;
+    self.bytesLabel.hidden = showsOnlyProgress;
+    self.messageHeight.active = showsOnlyProgress;
+    self.bytesHeight.active = showsOnlyProgress;
+    if (showsOnlyProgress) {
+        self.messageLabel.text = @"";
+        self.bytesLabel.text = @"";
+    }
+}
+
 - (void)updateMessage:(NSString *)message fraction:(double)fraction bytesDone:(uint64_t)done bytesTotal:(uint64_t)total {
+    if (self.messageLabel.hidden) {
+        float progress = total == 0 ? 0 : (float)MIN(MAX(fraction, 0), 1);
+        [self.progressView setProgress:progress animated:YES];
+        return;
+    }
     self.messageLabel.text = message.length ? message : @"正在处理";
     if (total == 0) {
         self.progressView.progress = 0;

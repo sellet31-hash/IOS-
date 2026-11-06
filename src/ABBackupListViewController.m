@@ -11,6 +11,7 @@
 @property (nonatomic) BOOL loaded;
 @property (nonatomic) NSUInteger unreadableCount;
 @property (nonatomic, strong) UISearchController *searchController;
+@property (nonatomic, copy) NSString *pinnedPath;
 @end
 
 @implementation ABBackupListViewController
@@ -52,8 +53,58 @@
             [self.refreshControl endRefreshing];
             [self.tableView reloadData];
             [self updateEmptyState];
+            [self pinCurrentBackup];
         });
     });
+}
+
+- (NSSet<NSString *> *)currentPathsIn:(NSArray<ABBackupInfo *> *)backups {
+    NSMutableDictionary<NSString *, ABBackupInfo *> *latest = [NSMutableDictionary dictionary];
+    for (ABBackupInfo *backup in backups) {
+        if (!backup.lastUsedAt || backup.bundleIdentifier.length == 0 || backup.fileURL.path.length == 0) {
+            continue;
+        }
+        ABBackupInfo *existing = latest[backup.bundleIdentifier];
+        if (!existing || [backup.lastUsedAt compare:existing.lastUsedAt] == NSOrderedDescending) {
+            latest[backup.bundleIdentifier] = backup;
+        }
+    }
+    NSMutableSet<NSString *> *paths = [NSMutableSet set];
+    for (ABBackupInfo *backup in latest.allValues) {
+        [paths addObject:backup.fileURL.path];
+    }
+    return paths;
+}
+
+- (NSString *)detailForBackup:(ABBackupInfo *)backup current:(BOOL)current {
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    [parts addObject:current ? @"当前使用" : (backup.lastUsedAt ? [NSString stringWithFormat:@"上次使用 %@", ABFormatDate(backup.lastUsedAt)] : @"尚未使用")];
+    NSString *created = ABFormatDate(backup.createdAt);
+    if (created.length > 0) {
+        [parts addObject:[NSString stringWithFormat:@"备份于 %@", created]];
+    }
+    if (backup.shortVersion.length > 0) {
+        [parts addObject:backup.shortVersion];
+    }
+    if (backup.fileSize > 0) {
+        [parts addObject:ABFormatBytes(backup.fileSize)];
+    }
+    return [parts componentsJoinedByString:@" · "];
+}
+
+- (void)pinCurrentBackup {
+    if (self.pinnedPath.length == 0) {
+        return;
+    }
+    NSArray<ABBackupInfo *> *visible = [self visibleBackups];
+    for (NSUInteger index = 0; index < visible.count; index++) {
+        if ([visible[index].fileURL.path isEqualToString:self.pinnedPath]) {
+            NSIndexPath *path = [NSIndexPath indexPathForRow:(NSInteger)index inSection:0];
+            [self.tableView scrollToRowAtIndexPath:path atScrollPosition:UITableViewScrollPositionMiddle animated:YES];
+            [self.tableView selectRowAtIndexPath:path animated:NO scrollPosition:UITableViewScrollPositionNone];
+            return;
+        }
+    }
 }
 
 - (NSArray<ABBackupInfo *> *)visibleBackups {
@@ -103,22 +154,29 @@
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"backup"];
     }
     if (!self.loaded) {
-        cell.textLabel.text = @"正在读取备份";
-        cell.detailTextLabel.text = nil;
-        cell.imageView.image = nil;
+        UIListContentConfiguration *config = [UIListContentConfiguration cellConfiguration];
+        config.text = @"正在读取备份";
+        config.textProperties.color = UIColor.secondaryLabelColor;
+        cell.contentConfiguration = config;
+        cell.accessoryType = UITableViewCellAccessoryNone;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
         return cell;
     }
     ABBackupInfo *backup = [self visibleBackups][indexPath.row];
-    cell.textLabel.text = backup.preferredTitle;
-    cell.detailTextLabel.numberOfLines = 2;
-    cell.detailTextLabel.text = backup.summaryText;
-    cell.detailTextLabel.textColor = UIColor.secondaryLabelColor;
+    BOOL current = [[self currentPathsIn:self.backups] containsObject:backup.fileURL.path];
+    UIListContentConfiguration *config = [UIListContentConfiguration subtitleCellConfiguration];
+    config.text = backup.preferredTitle;
+    config.secondaryText = [self detailForBackup:backup current:current];
+    config.secondaryTextProperties.color = current ? ABAccentColor() : UIColor.secondaryLabelColor;
+    config.secondaryTextProperties.numberOfLines = 2;
     UIImage *icon = ABAppIcon(backup.bundleIdentifier);
-    cell.imageView.image = icon ?: [UIImage systemImageNamed:@"archivebox"];
-    cell.imageView.layer.cornerRadius = 8;
-    cell.imageView.layer.cornerCurve = kCACornerCurveContinuous;
-    cell.imageView.clipsToBounds = YES;
+    config.image = icon ?: [UIImage systemImageNamed:current ? @"checkmark.circle.fill" : @"archivebox"];
+    config.imageProperties.tintColor = icon ? nil : (current ? ABAccentColor() : UIColor.secondaryLabelColor);
+    config.imageProperties.maximumSize = CGSizeMake(28, 28);
+    config.imageProperties.cornerRadius = 6;
+    cell.contentConfiguration = config;
+    cell.accessoryType = current ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+    cell.tintColor = ABAccentColor();
     cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     return cell;
 }
@@ -130,12 +188,13 @@
     if (self.unreadableCount > 0) {
         return [NSString stringWithFormat:@"有 %lu 个文件无法读取。可用的备份在「文件」App 的「应用备份 / Backups」。", (unsigned long)self.unreadableCount];
     }
-    return @"点一份备份可以修改名称，用来标记用途。恢复成功后会自动记下上次使用时间。";
+    return @"带对勾的是该应用当前使用的备份。点一份备份可以恢复、改名或分享。";
 }
 
 - (void)presentActionsForBackup:(ABBackupInfo *)backup sourceView:(UIView *)sourceView {
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:backup.preferredTitle message:backup.summaryText preferredStyle:UIAlertControllerStyleActionSheet];
     [sheet addAction:[UIAlertAction actionWithTitle:@"恢复" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
+        self.pinnedPath = backup.fileURL.path;
         [ABBackupActions confirmRestore:backup fromViewController:self sourceView:sourceView completion:^{
             [self reloadBackups];
         }];
@@ -176,6 +235,7 @@
     }
     ABBackupInfo *backup = [self visibleBackups][indexPath.row];
     UIContextualAction *restore = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal title:@"恢复" handler:^(__unused UIContextualAction *action, UIView *sourceView, void (^done)(BOOL)) {
+        self.pinnedPath = backup.fileURL.path;
         [ABBackupActions confirmRestore:backup fromViewController:self sourceView:sourceView completion:^{
             [self reloadBackups];
         }];
