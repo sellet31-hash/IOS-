@@ -2,6 +2,12 @@
 
 仅在 **台湾虾皮** 进程内生效。目标：在不重刷 iOS 的前提下，尽量模拟 **「刷机后首次安装虾皮」** 时客户端会上报的安装实例 ID，而不是只改序列号。
 
+## 1.2.17
+
+1.2.16 已经装上，但重新打开虾皮后仍然没有 `lastload.plist`，所以插件没被注入。过滤条件只写了 `com.beeasy.shopee.tw`，ElleKit 没有把 dylib 载入进程。
+
+1.2.17 改为随 UIKit 注入。只有进程名或 Bundle ID 里带 shopee 才启用伪装。只要有界面程序加载了插件，就会写 `/var/jb/tmp/devicespoof-loaded.txt`。
+
 ## 1.2.16
 
 1.2.15 直接往 `TweakInject` 解包。这台手机上 dpkg 写不进那个路径，升级时还把原来的 dylib 删了，所以两个路径都变成空的。

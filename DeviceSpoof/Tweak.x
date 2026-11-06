@@ -8,6 +8,8 @@
 #import <mach-o/loader.h>
 #import <mach/mach.h>
 #import <errno.h>
+#import <stdio.h>
+#import <stdlib.h>
 #import <string.h>
 #import <sys/syscall.h>
 #import <sys/sysctl.h>
@@ -77,7 +79,7 @@ static BOOL gDSPAnswersReady = NO;
 
 static void DSPWriteLoadMarker(void) {
     NSDictionary *info = @{
-        @"version" : @"1.2.16",
+        @"version" : @"1.2.17",
         @"bundle" : [[NSBundle mainBundle] bundleIdentifier] ?: @"",
         @"process" : [[NSProcessInfo processInfo] processName] ?: @"",
         @"productType" : [DSPProfile productType],
@@ -558,6 +560,17 @@ static void DSPPrepareAnswers(void) {
     kDSPMarketingNameValue = CFStringCreateWithCString(NULL, [DSPProfile marketingName].UTF8String, kCFStringEncodingUTF8);
 }
 
+__attribute__((constructor(1))) static void DSPEarlyLoadNote(void) {
+    FILE *file = fopen("/var/jb/tmp/devicespoof-loaded.txt", "w");
+    if (!file) {
+        return;
+    }
+    fprintf(file, "pid=%d prog=%s\n", getpid(), getprogname() ? getprogname() : "");
+    fclose(file);
+}
+
+%group ShopeeHooks
+
 %hook UIDevice
 
 - (NSUUID *)identifierForVendor {
@@ -778,6 +791,8 @@ static void DSPPrepareAnswers(void) {
 
 %end
 
+%end
+
 static BOOL DSPHookLinked(void *symbol, void *replacement, void **original) {
     if (!symbol || !replacement || !original) {
         return NO;
@@ -829,6 +844,15 @@ static void DSPInstallInlineHooks(void) {
         return;
     }
     DSPWriteLoadMarker();
+    NSString *bundleIdentifier = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
+    NSString *processName = [[NSProcessInfo processInfo] processName] ?: @"";
+    BOOL isShopee = [bundleIdentifier rangeOfString:@"shopee" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                    [processName rangeOfString:@"shopee" options:NSCaseInsensitiveSearch].location != NSNotFound;
+    if (!isShopee) {
+        installed = YES;
+        return;
+    }
+    %init(ShopeeHooks);
     [DSPProfile reloadPreferences];
     DSPEnsureReady();
     if ([DSPProfile isSpoofEnabled]) {
