@@ -15,7 +15,6 @@
 #import <sys/sysctl.h>
 #import <sys/utsname.h>
 #import <unistd.h>
-#import <objc/runtime.h>
 #import <mach-o/nlist.h>
 #import "DSPProfile.h"
 #import "DSPShopeeReport.h"
@@ -575,8 +574,6 @@ __attribute__((constructor(1))) static void DSPEarlyLoadNote(void) {
     fclose(file);
 }
 
-%group ShopeeHooks
-
 %hook UIDevice
 
 - (NSUUID *)identifierForVendor {
@@ -797,8 +794,6 @@ __attribute__((constructor(1))) static void DSPEarlyLoadNote(void) {
 
 %end
 
-%end
-
 static void *DSPResolveSymbol(const char *name, void *linked) {
     void *resolved = name ? dlsym(RTLD_DEFAULT, name) : NULL;
     return resolved ? resolved : linked;
@@ -867,69 +862,6 @@ static void DSPInstallInlineHooks(void) {
     DSPHookLinked(gDSPTargetSyscall, (void *)DSP_syscall, (void **)&orig_syscall);
     gDSPTargetCFDictionaryGetValue = DSPResolveSymbol("CFDictionaryGetValue", (void *)CFDictionaryGetValue);
     DSPHookLinked(gDSPTargetCFDictionaryGetValue, (void *)DSP_CFDictionaryGetValue, (void **)&orig_CFDictionaryGetValue);
-}
-
-static IMP dspOrigJSON = NULL;
-static IMP dspOrigHTTPBody = NULL;
-static IMP dspOrigUTF8 = NULL;
-static IMP dspOrigModel = NULL;
-static IMP dspOrigSystemVersion = NULL;
-
-static NSData *dsp_dataWithJSON(id self, SEL cmd, id obj, NSUInteger opt, NSError **error) {
-    if ([DSPProfile isSpoofEnabled] && obj) {
-        obj = [DSPShopeeReport rewritePayloadIfNeeded:obj];
-    }
-    return ((NSData *(*)(id, SEL, id, NSUInteger, NSError **))dspOrigJSON)(self, cmd, obj, opt, error);
-}
-
-static void dsp_setHTTPBody(id self, SEL cmd, NSData *body) {
-    if ([DSPProfile isSpoofEnabled] && body.length > 0) {
-        NSData *replaced = [DSPShopeeReport replaceHardwareTokensInData:body];
-        body = replaced ?: body;
-    }
-    ((void (*)(id, SEL, NSData *))dspOrigHTTPBody)(self, cmd, body);
-}
-
-static NSString *dsp_stringWithUTF8(id self, SEL cmd, const char *bytes) {
-    if (gDSPStringHookDepth > 0 || ![DSPProfile isSpoofEnabled] || !bytes) {
-        return ((NSString *(*)(id, SEL, const char *))dspOrigUTF8)(self, cmd, bytes);
-    }
-    const char *realMachine = [DSPProfile realMachineUTF8];
-    if (!realMachine || !strstr(bytes, realMachine)) {
-        return ((NSString *(*)(id, SEL, const char *))dspOrigUTF8)(self, cmd, bytes);
-    }
-    gDSPStringHookDepth++;
-    NSString *value = ((NSString *(*)(id, SEL, const char *))dspOrigUTF8)(self, cmd, bytes);
-    gDSPStringHookDepth--;
-    return value ? [DSPShopeeReport replaceHardwareTokensInString:value] : value;
-}
-
-static NSString *dsp_model(id self, SEL cmd) {
-    if ([DSPProfile isSpoofEnabled]) {
-        return [DSPProfile marketingName];
-    }
-    return ((NSString *(*)(id, SEL))dspOrigModel)(self, cmd);
-}
-
-static NSString *dsp_systemVersion(id self, SEL cmd) {
-    if ([DSPProfile isSpoofEnabled]) {
-        return [DSPProfile spoofedOSVersion];
-    }
-    return ((NSString *(*)(id, SEL))dspOrigSystemVersion)(self, cmd);
-}
-
-static void DSPSwizzle(Class cls, SEL sel, IMP replacement, IMP *original) {
-    Method method = class_getInstanceMethod(cls, sel);
-    if (!method) {
-        method = class_getClassMethod(cls, sel);
-    }
-    if (!method || !original) {
-        return;
-    }
-    *original = method_setImplementation(method, replacement);
-    if (*original) {
-        gDSPReboundSlots++;
-    }
 }
 
 static BOOL DSPImportNameMatches(const char *name, const char **canonical) {
@@ -1045,14 +977,6 @@ static void DSPRebindNamedImports(const struct mach_header *header, intptr_t sli
     }
 }
 
-static void DSPInstallReportSwizzles(void) {
-    DSPSwizzle(objc_getClass("NSJSONSerialization"), @selector(dataWithJSONObject:options:error:), (IMP)dsp_dataWithJSON, &dspOrigJSON);
-    DSPSwizzle(objc_getClass("NSMutableURLRequest"), @selector(setHTTPBody:), (IMP)dsp_setHTTPBody, &dspOrigHTTPBody);
-    DSPSwizzle(objc_getClass("NSString"), @selector(stringWithUTF8String:), (IMP)dsp_stringWithUTF8, &dspOrigUTF8);
-    DSPSwizzle(objc_getClass("UIDevice"), @selector(model), (IMP)dsp_model, &dspOrigModel);
-    DSPSwizzle(objc_getClass("UIDevice"), @selector(systemVersion), (IMP)dsp_systemVersion, &dspOrigSystemVersion);
-}
-
 static void DSPRebindShopeeImports(void) {
     uint32_t count = _dyld_image_count();
     for (uint32_t index = 0; index < count; index++) {
@@ -1087,7 +1011,6 @@ static void DSPRebindShopeeImports(void) {
         if (sysctlbyname("hw.machine", realMachine, &realMachineLength, NULL, 0) == 0 && realMachine[0]) {
             [DSPProfile captureRealMachine:realMachine];
         }
-        DSPInstallReportSwizzles();
         DSPRebindShopeeImports();
     }
     DSPWriteLoadMarker();
