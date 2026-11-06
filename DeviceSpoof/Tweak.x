@@ -11,10 +11,12 @@
 #import <stdio.h>
 #import <stdlib.h>
 #import <string.h>
+#import <sys/mman.h>
 #import <sys/syscall.h>
 #import <sys/sysctl.h>
 #import <sys/utsname.h>
 #import <unistd.h>
+#import <libkern/OSCacheControl.h>
 #import "DSPProfile.h"
 #import "DSPShopeeReport.h"
 
@@ -76,12 +78,14 @@ static const char *kDSPIOSVersionUTF8;
 static unsigned int gDSPBindCount = 0;
 static DSPBind gDSPBinds[10];
 static uint32_t gDSPReboundSlots = 0;
+static uint32_t gDSPProtectFails = 0;
+static uint32_t gDSPImagesSeen = 0;
 static BOOL gDSPAnswersReady = NO;
 static BOOL gDSPRealMachineCaptured = NO;
 
 static void DSPWriteLoadMarker(void) {
     NSDictionary *info = @{
-        @"version" : @"1.2.19",
+        @"version" : @"1.2.20",
         @"bundle" : [[NSBundle mainBundle] bundleIdentifier] ?: @"",
         @"process" : [[NSProcessInfo processInfo] processName] ?: @"",
         @"productType" : [DSPProfile productType],
@@ -91,6 +95,8 @@ static void DSPWriteLoadMarker(void) {
         @"hookUname" : @(orig_uname != NULL && (void *)orig_uname != gDSPTargetUname),
         @"hookGestalt" : @(orig_MGCopyAnswer != NULL && (void *)orig_MGCopyAnswer != gDSPTargetMGCopyAnswer),
         @"reboundSlots" : @(gDSPReboundSlots),
+        @"protectFails" : @(gDSPProtectFails),
+        @"imagesSeen" : @(gDSPImagesSeen),
         @"loadedAt" : @((NSInteger)[[NSDate date] timeIntervalSince1970]),
         @"markerHint" : @"Filza: Shopee container Library/Caches, or /var/jb/tmp/",
     };
@@ -406,21 +412,13 @@ static BOOL DSPImageCanBePatched(const char *path) {
     if (!path || path[0] == '\0') {
         return NO;
     }
-    if (strncmp(path, "/System/", 8) == 0 || strncmp(path, "/usr/", 5) == 0 || strncmp(path, "/private/preboot/", 17) == 0) {
+    if (strncmp(path, "/System/", 8) == 0 || strncmp(path, "/usr/lib/", 9) == 0) {
         return NO;
     }
-    if (strstr(path, "/var/jb/") || strstr(path, "DeviceSpoof") || strstr(path, "libsubstrate") || strstr(path, "ellekit") || strstr(path, "Substitute")) {
+    if (strstr(path, "DeviceSpoof") || strstr(path, "libsubstrate") || strstr(path, "libellekit") || strstr(path, "libsystem") || strstr(path, "Substitute")) {
         return NO;
     }
     return YES;
-}
-
-static BOOL DSPSectionCanHoldPointers(const struct section_64 *section) {
-    uint32_t type = section->flags & SECTION_TYPE;
-    if (type == S_ZEROFILL || type == S_GB_ZEROFILL || type == S_THREAD_LOCAL_ZEROFILL) {
-        return NO;
-    }
-    return section->size >= sizeof(void *);
 }
 
 static void DSPWriteSlot(void **slot, void *replacement) {
@@ -433,6 +431,8 @@ static void DSPWriteSlot(void **slot, void *replacement) {
     if (result == KERN_SUCCESS) {
         *slot = replacement;
         gDSPReboundSlots++;
+    } else {
+        gDSPProtectFails++;
     }
 }
 
@@ -449,23 +449,18 @@ static void DSPRebindImage(const struct mach_header *header, intptr_t slide, con
         }
         if (command->cmd == LC_SEGMENT_64) {
             const struct segment_command_64 *segment = (const struct segment_command_64 *)command;
-            if (strcmp(segment->segname, "__DATA") == 0 || strcmp(segment->segname, "__DATA_CONST") == 0) {
-                const struct section_64 *section = (const struct section_64 *)(segment + 1);
-                for (uint32_t sectionIndex = 0; sectionIndex < segment->nsects; sectionIndex++, section++) {
-                    if (!DSPSectionCanHoldPointers(section)) {
-                        continue;
-                    }
-                    uintptr_t start = (uintptr_t)(section->addr + slide);
-                    uintptr_t end = start + (uintptr_t)section->size;
-                    start &= ~(uintptr_t)(sizeof(void *) - 1);
-                    for (uintptr_t address = start; address + sizeof(void *) <= end; address += sizeof(void *)) {
-                        void **slot = (void **)address;
-                        void *value = *slot;
-                        for (unsigned int bindIndex = 0; bindIndex < bindCount; bindIndex++) {
-                            if (value == binds[bindIndex].target && binds[bindIndex].target != binds[bindIndex].replacement) {
-                                DSPWriteSlot(slot, binds[bindIndex].replacement);
-                                break;
-                            }
+            if ((strcmp(segment->segname, "__DATA") == 0 || strcmp(segment->segname, "__DATA_CONST") == 0 || strcmp(segment->segname, "__AUTH_CONST") == 0) &&
+                segment->vmsize >= sizeof(void *) && segment->vmsize <= (1ull << 28)) {
+                uintptr_t start = (uintptr_t)(segment->vmaddr + slide);
+                uintptr_t end = start + (uintptr_t)segment->vmsize;
+                start = (start + sizeof(void *) - 1) & ~(uintptr_t)(sizeof(void *) - 1);
+                for (uintptr_t address = start; address + sizeof(void *) <= end; address += sizeof(void *)) {
+                    void **slot = (void **)address;
+                    void *value = *slot;
+                    for (unsigned int bindIndex = 0; bindIndex < bindCount; bindIndex++) {
+                        if (value == binds[bindIndex].target && binds[bindIndex].target != binds[bindIndex].replacement) {
+                            DSPWriteSlot(slot, binds[bindIndex].replacement);
+                            break;
                         }
                     }
                 }
@@ -510,6 +505,7 @@ static void DSPRebindOneImage(const struct mach_header *header, intptr_t slide, 
     if (name && !DSPImageCanBePatched(name)) {
         return;
     }
+    gDSPImagesSeen++;
     DSPRebindImage(header, slide, gDSPBinds, gDSPBindCount);
 }
 
@@ -802,6 +798,72 @@ static void *DSPResolveSymbol(const char *name, void *linked) {
     return resolved ? resolved : linked;
 }
 
+typedef void (*DSPMSHookFunction)(void *symbol, void *replacement, void **original);
+
+static DSPMSHookFunction DSPFindMSHook(void) {
+    DSPMSHookFunction found = (DSPMSHookFunction)dlsym(RTLD_DEFAULT, "MSHookFunction");
+    return found ? found : MSHookFunction;
+}
+
+static BOOL DSPPrologueCanMove(const uint32_t *insns, unsigned count) {
+    for (unsigned index = 0; index < count; index++) {
+        uint32_t insn = insns[index];
+        if ((insn & 0x9F000000) == 0x90000000 || (insn & 0x9F000000) == 0x10000000) {
+            return NO;
+        }
+        if ((insn & 0xFC000000) == 0x14000000 || (insn & 0xFC000000) == 0x94000000) {
+            return NO;
+        }
+        if ((insn & 0xFF000010) == 0x54000000 || (insn & 0x7E000000) == 0x34000000 || (insn & 0x7E000000) == 0x36000000) {
+            return NO;
+        }
+        if ((insn & 0x3B000000) == 0x18000000) {
+            return NO;
+        }
+    }
+    return YES;
+}
+
+static BOOL DSPInlineHook(void *symbol, void *replacement, void **original) {
+    uint32_t prologue[4];
+    memcpy(prologue, symbol, sizeof(prologue));
+    if (!DSPPrologueCanMove(prologue, 4)) {
+        return NO;
+    }
+    uint32_t *trampoline = mmap(NULL, 64, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    if (trampoline == MAP_FAILED) {
+        return NO;
+    }
+    memcpy(trampoline, prologue, sizeof(prologue));
+    trampoline[4] = 0x58000050;
+    trampoline[5] = 0xD61F0200;
+    *(void **)(trampoline + 6) = (uint8_t *)symbol + sizeof(prologue);
+    if (mprotect(trampoline, 64, PROT_READ | PROT_EXEC) != 0) {
+        munmap(trampoline, 64);
+        return NO;
+    }
+    sys_icache_invalidate(trampoline, 64);
+
+    vm_size_t page = (vm_size_t)getpagesize();
+    vm_address_t pageStart = (vm_address_t)symbol & ~(vm_address_t)(page - 1);
+    kern_return_t result = vm_protect(mach_task_self(), pageStart, page, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+    if (result != KERN_SUCCESS) {
+        result = vm_protect(mach_task_self(), pageStart, page * 2, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+    }
+    if (result != KERN_SUCCESS) {
+        gDSPProtectFails++;
+        munmap(trampoline, 64);
+        return NO;
+    }
+    uint32_t *site = symbol;
+    site[0] = 0x58000050;
+    site[1] = 0xD61F0200;
+    *(void **)(site + 2) = replacement;
+    sys_icache_invalidate(symbol, sizeof(prologue));
+    *original = trampoline;
+    return YES;
+}
+
 static BOOL DSPHookLinked(void *symbol, void *replacement, void **original) {
     if (!symbol || !replacement || !original) {
         return NO;
@@ -810,13 +872,17 @@ static BOOL DSPHookLinked(void *symbol, void *replacement, void **original) {
         return YES;
     }
     void *previous = NULL;
-    MSHookFunction(symbol, replacement, &previous);
+    DSPMSHookFunction hook = DSPFindMSHook();
+    if (hook) {
+        hook(symbol, replacement, &previous);
+    }
     if (previous && previous != symbol && previous != replacement) {
         *original = previous;
         return YES;
     }
-    // ElleKit left the function itself unchanged. Call the real symbol from
-    // the replacement, and rewrite the app's direct bindings below.
+    if (DSPInlineHook(symbol, replacement, original)) {
+        return YES;
+    }
     *original = symbol;
     return NO;
 }
