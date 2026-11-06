@@ -740,7 +740,7 @@ static void DSPInstallInlineHooks(void) {
     gDSPTargetUname = (void *)uname;
     gDSPTargetDlsym = (void *)dlsym;
     gDSPTargetSecItem = (void *)SecItemCopyMatching;
-    gDSPTargetSyscall = (void *)syscall;
+    gDSPTargetSyscall = dlsym(RTLD_DEFAULT, "syscall");
     orig_dlsym = (void *(*)(void *, const char *))dlsym;
 
     void *gestalt = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
