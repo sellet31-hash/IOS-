@@ -7,6 +7,7 @@
 #import <mach-o/dyld.h>
 #import <mach-o/loader.h>
 #import <mach/mach.h>
+#import <errno.h>
 #import <string.h>
 #import <sys/sysctl.h>
 #import <sys/utsname.h>
@@ -24,7 +25,6 @@ typedef struct {
 } DSPBind;
 
 static void DSPPrepareAnswers(void);
-static void DSPResolveOriginals(void);
 static void DSPInstallInlineHooks(void);
 
 static CFTypeRef (*orig_MGCopyAnswer)(CFStringRef);
@@ -33,6 +33,15 @@ static int (*orig_sysctl)(int *, unsigned int, void *, size_t *, void *, size_t)
 static int (*orig_uname)(struct utsname *);
 static void *(*orig_dlsym)(void *, const char *);
 static OSStatus (*orig_SecItemCopyMatching)(CFDictionaryRef, CFTypeRef *);
+static void *gDSPTargetMGCopyAnswer;
+static void *gDSPTargetSysctlbyname;
+static void *gDSPTargetSysctl;
+static void *gDSPTargetUname;
+static void *gDSPTargetDlsym;
+static void *gDSPTargetSecItem;
+static __thread int gDSPSysctlbynameDepth;
+static __thread int gDSPSysctlDepth;
+static __thread int gDSPUnameDepth;
 
 static CFStringRef kDSPProductTypeKey;
 static CFStringRef kDSPHardwareModelKey;
@@ -51,6 +60,8 @@ static CFStringRef kDSPBootSessionUUIDKey;
 static CFStringRef kDSPProductVersionKey;
 static CFStringRef kDSPHumanReadableProductVersionKey;
 static CFStringRef kDSPProductVersionValue;
+static CFStringRef kDSPMarketingNameKey;
+static CFStringRef kDSPMarketingNameValue;
 static const char *kDSPMachineUTF8;
 static const char *kDSPModelUTF8;
 static const char *kDSPIOSVersionUTF8;
@@ -60,11 +71,14 @@ static BOOL gDSPAnswersReady = NO;
 
 static void DSPWriteLoadMarker(void) {
     NSDictionary *info = @{
-        @"version" : @"1.2.9",
+        @"version" : @"1.2.10",
         @"bundle" : [[NSBundle mainBundle] bundleIdentifier] ?: @"",
         @"productType" : [DSPProfile productType],
         @"marketingName" : [DSPProfile marketingName],
         @"enabled" : @([DSPProfile isSpoofEnabled]),
+        @"hookSysctl" : @(orig_sysctlbyname != NULL),
+        @"hookUname" : @(orig_uname != NULL),
+        @"hookGestalt" : @(orig_MGCopyAnswer != NULL),
         @"loadedAt" : @((NSInteger)[[NSDate date] timeIntervalSince1970]),
         @"markerHint" : @"Filza: Shopee container Library/Caches, or /var/jb/tmp/",
     };
@@ -88,12 +102,9 @@ static void DSPEnsureReady(void) {
         return;
     }
     [DSPProfile reloadPreferences];
-    if (![DSPProfile isSpoofEnabled]) {
-        gDSPAnswersReady = YES;
-        return;
+    if ([DSPProfile isSpoofEnabled]) {
+        DSPPrepareAnswers();
     }
-    DSPPrepareAnswers();
-    DSPResolveOriginals();
     gDSPAnswersReady = YES;
 }
 
@@ -127,6 +138,9 @@ static CFStringRef DSPAnswer(CFStringRef property) {
             (kDSPHumanReadableProductVersionKey && CFEqual(property, kDSPHumanReadableProductVersionKey))) {
             return kDSPProductVersionValue;
         }
+    }
+    if (kDSPMarketingNameKey && kDSPMarketingNameValue && CFEqual(property, kDSPMarketingNameKey)) {
+        return kDSPMarketingNameValue;
     }
     return NULL;
 }
@@ -181,47 +195,101 @@ static CFTypeRef DSP_MGCopyAnswer(CFStringRef property) {
     return orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL;
 }
 
-static void DSPReplaceCString(void *buffer, size_t *length, const char *value) {
-    if (!buffer || !length || !value) {
-        return;
+static const char *DSPSpoofForSysctlName(const char *name) {
+    if (!name) {
+        return NULL;
     }
+    if ((strcmp(name, "hw.machine") == 0 || strcmp(name, "hw.product") == 0) && kDSPMachineUTF8) {
+        return kDSPMachineUTF8;
+    }
+    if (strcmp(name, "hw.model") == 0 && kDSPModelUTF8) {
+        return kDSPModelUTF8;
+    }
+    if (strcmp(name, "kern.osproductversion") == 0 && kDSPIOSVersionUTF8) {
+        return kDSPIOSVersionUTF8;
+    }
+    return NULL;
+}
+
+static int DSPWriteSpoofedCString(void *oldp, size_t *oldlenp, const char *value) {
     size_t need = strlen(value) + 1;
-    if (*length >= need) {
-        memcpy(buffer, value, need);
-        *length = need;
+    if (!oldp) {
+        if (oldlenp) {
+            *oldlenp = need;
+        }
+        return 0;
     }
+    if (!oldlenp) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (*oldlenp < need) {
+        *oldlenp = need;
+        errno = ENOMEM;
+        return -1;
+    }
+    memcpy(oldp, value, need);
+    *oldlenp = need;
+    return 0;
 }
 
 static int DSP_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
-    int result = orig_sysctlbyname ? orig_sysctlbyname(name, oldp, oldlenp, newp, newlen) : -1;
-    if (result != 0 || !name || !oldp || !oldlenp) {
-        return result;
+    const char *spoof = DSPSpoofForSysctlName(name);
+    if (spoof) {
+        return DSPWriteSpoofedCString(oldp, oldlenp, spoof);
     }
-    if (strcmp(name, "hw.machine") == 0 || strcmp(name, "hw.product") == 0) {
-        DSPReplaceCString(oldp, oldlenp, kDSPMachineUTF8);
-    } else if (strcmp(name, "hw.model") == 0) {
-        DSPReplaceCString(oldp, oldlenp, kDSPModelUTF8);
-    } else if (kDSPIOSVersionUTF8 && (strcmp(name, "kern.osproductversion") == 0 || strcmp(name, "kern.osversion") == 0)) {
-        DSPReplaceCString(oldp, oldlenp, kDSPIOSVersionUTF8);
+    if (!orig_sysctlbyname) {
+        errno = ENOSYS;
+        return -1;
     }
+    if (gDSPSysctlbynameDepth > 0) {
+        errno = EAGAIN;
+        return -1;
+    }
+    gDSPSysctlbynameDepth++;
+    int result = orig_sysctlbyname(name, oldp, oldlenp, newp, newlen);
+    gDSPSysctlbynameDepth--;
     return result;
 }
 
 static int DSP_sysctl(int *name, unsigned int namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
-    int result = orig_sysctl ? orig_sysctl(name, namelen, oldp, oldlenp, newp, newlen) : -1;
-    if (result != 0 || !name || namelen < 2 || !oldp || !oldlenp || name[0] != CTL_HW) {
-        return result;
+    if (name && namelen >= 2 && name[0] == CTL_HW) {
+        const char *spoof = NULL;
+        if (name[1] == HW_MACHINE && kDSPMachineUTF8) {
+            spoof = kDSPMachineUTF8;
+        } else if (name[1] == HW_MODEL && kDSPModelUTF8) {
+            spoof = kDSPModelUTF8;
+        }
+        if (spoof) {
+            return DSPWriteSpoofedCString(oldp, oldlenp, spoof);
+        }
     }
-    if (name[1] == HW_MACHINE) {
-        DSPReplaceCString(oldp, oldlenp, kDSPMachineUTF8);
-    } else if (name[1] == HW_MODEL) {
-        DSPReplaceCString(oldp, oldlenp, kDSPModelUTF8);
+    if (!orig_sysctl) {
+        errno = ENOSYS;
+        return -1;
     }
+    if (gDSPSysctlDepth > 0) {
+        errno = EAGAIN;
+        return -1;
+    }
+    gDSPSysctlDepth++;
+    int result = orig_sysctl(name, namelen, oldp, oldlenp, newp, newlen);
+    gDSPSysctlDepth--;
     return result;
 }
 
 static int DSP_uname(struct utsname *buffer) {
-    int result = orig_uname ? orig_uname(buffer) : -1;
+    if (!orig_uname) {
+        errno = ENOSYS;
+        return -1;
+    }
+    if (gDSPUnameDepth > 0) {
+        errno = EAGAIN;
+        return -1;
+    }
+    gDSPUnameDepth++;
+    int result = orig_uname(buffer);
+    gDSPUnameDepth--;
     if (result == 0 && buffer && kDSPMachineUTF8) {
         strlcpy(buffer->machine, kDSPMachineUTF8, sizeof(buffer->machine));
     }
@@ -323,23 +391,23 @@ static void DSPRebindImage(const struct mach_header *header, intptr_t slide, con
 
 static void DSPRebuildBindTable(void) {
     gDSPBindCount = 0;
-    if (orig_MGCopyAnswer) {
-        gDSPBinds[gDSPBindCount++] = (DSPBind){(void *)orig_MGCopyAnswer, (void *)DSP_MGCopyAnswer};
+    if (gDSPTargetMGCopyAnswer && orig_MGCopyAnswer) {
+        gDSPBinds[gDSPBindCount++] = (DSPBind){gDSPTargetMGCopyAnswer, (void *)DSP_MGCopyAnswer};
     }
-    if (orig_sysctlbyname) {
-        gDSPBinds[gDSPBindCount++] = (DSPBind){(void *)orig_sysctlbyname, (void *)DSP_sysctlbyname};
+    if (gDSPTargetSysctlbyname && orig_sysctlbyname) {
+        gDSPBinds[gDSPBindCount++] = (DSPBind){gDSPTargetSysctlbyname, (void *)DSP_sysctlbyname};
     }
-    if (orig_sysctl) {
-        gDSPBinds[gDSPBindCount++] = (DSPBind){(void *)orig_sysctl, (void *)DSP_sysctl};
+    if (gDSPTargetSysctl && orig_sysctl) {
+        gDSPBinds[gDSPBindCount++] = (DSPBind){gDSPTargetSysctl, (void *)DSP_sysctl};
     }
-    if (orig_uname) {
-        gDSPBinds[gDSPBindCount++] = (DSPBind){(void *)orig_uname, (void *)DSP_uname};
+    if (gDSPTargetUname && orig_uname) {
+        gDSPBinds[gDSPBindCount++] = (DSPBind){gDSPTargetUname, (void *)DSP_uname};
     }
-    if (orig_dlsym) {
-        gDSPBinds[gDSPBindCount++] = (DSPBind){(void *)orig_dlsym, (void *)DSP_dlsym};
+    if (gDSPTargetDlsym && orig_dlsym) {
+        gDSPBinds[gDSPBindCount++] = (DSPBind){gDSPTargetDlsym, (void *)DSP_dlsym};
     }
-    if (orig_SecItemCopyMatching) {
-        gDSPBinds[gDSPBindCount++] = (DSPBind){(void *)orig_SecItemCopyMatching, (void *)DSP_SecItemCopyMatching};
+    if (gDSPTargetSecItem && orig_SecItemCopyMatching) {
+        gDSPBinds[gDSPBindCount++] = (DSPBind){gDSPTargetSecItem, (void *)DSP_SecItemCopyMatching};
     }
 }
 
@@ -400,6 +468,8 @@ static void DSPPrepareAnswers(void) {
     kDSPProductVersionKey = CFStringCreateWithCString(NULL, "ProductVersion", kCFStringEncodingUTF8);
     kDSPHumanReadableProductVersionKey = CFStringCreateWithCString(NULL, "HumanReadableProductVersionString", kCFStringEncodingUTF8);
     kDSPProductVersionValue = CFStringCreateWithCString(NULL, [DSPProfile osVersionUTF8], kCFStringEncodingUTF8);
+    kDSPMarketingNameKey = CFStringCreateWithCString(NULL, "MarketingName", kCFStringEncodingUTF8);
+    kDSPMarketingNameValue = CFStringCreateWithCString(NULL, [DSPProfile marketingName].UTF8String, kCFStringEncodingUTF8);
 }
 
 %hook UIDevice
@@ -520,63 +590,39 @@ static void DSPPrepareAnswers(void) {
 
 %end
 
+static BOOL DSPHookLinked(void *symbol, void *replacement, void **original) {
+    if (!symbol || !replacement || !original) {
+        return NO;
+    }
+    *original = NULL;
+    MSHookFunction(symbol, replacement, original);
+    return *original != NULL && *original != symbol && *original != replacement;
+}
+
 static void DSPInstallInlineHooks(void) {
-    const char *names[] = {
-        "MGCopyAnswer", "sysctlbyname", "sysctl", "uname", "SecItemCopyMatching"
-    };
-    void *replacements[] = {
-        (void *)DSP_MGCopyAnswer, (void *)DSP_sysctlbyname, (void *)DSP_sysctl,
-        (void *)DSP_uname, (void *)DSP_SecItemCopyMatching
-    };
-    void **originals[] = {
-        (void **)&orig_MGCopyAnswer, (void **)&orig_sysctlbyname, (void **)&orig_sysctl,
-        (void **)&orig_uname, (void **)&orig_SecItemCopyMatching
-    };
-    void *symbols[5] = {0};
-    for (unsigned int index = 0; index < 5; index++) {
-        symbols[index] = dlsym(RTLD_DEFAULT, names[index]);
-    }
-    if (!symbols[0]) {
-        void *gestalt = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
-        if (!gestalt) {
-            gestalt = dlopen("/System/Library/Frameworks/MobileGestalt.framework/MobileGestalt", RTLD_LAZY);
-        }
-        if (gestalt) {
-            symbols[0] = dlsym(gestalt, "MGCopyAnswer");
-        }
-    }
-    for (unsigned int index = 0; index < 5; index++) {
-        if (!symbols[index]) {
-            continue;
-        }
-        MSHookFunction(symbols[index], replacements[index], originals[index]);
-    }
-}
+    gDSPTargetSysctlbyname = (void *)sysctlbyname;
+    gDSPTargetSysctl = (void *)sysctl;
+    gDSPTargetUname = (void *)uname;
+    gDSPTargetDlsym = (void *)dlsym;
+    gDSPTargetSecItem = (void *)SecItemCopyMatching;
+    orig_dlsym = (void *(*)(void *, const char *))dlsym;
 
-static void *DSPResolveOriginalSymbol(const char *name) {
-    void *sym = dlsym(RTLD_DEFAULT, name);
-    if (sym) {
-        return sym;
-    }
-    return dlsym(RTLD_NEXT, name);
-}
-
-static void DSPResolveOriginals(void) {
     void *gestalt = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
     if (!gestalt) {
         gestalt = dlopen("/System/Library/Frameworks/MobileGestalt.framework/MobileGestalt", RTLD_LAZY);
     }
     if (gestalt) {
-        orig_MGCopyAnswer = (CFTypeRef (*)(CFStringRef))dlsym(gestalt, "MGCopyAnswer");
+        gDSPTargetMGCopyAnswer = dlsym(gestalt, "MGCopyAnswer");
     }
-    if (!orig_MGCopyAnswer) {
-        orig_MGCopyAnswer = (CFTypeRef (*)(CFStringRef))DSPResolveOriginalSymbol("MGCopyAnswer");
+    if (!gDSPTargetMGCopyAnswer) {
+        gDSPTargetMGCopyAnswer = dlsym(RTLD_DEFAULT, "MGCopyAnswer");
     }
-    orig_sysctlbyname = (int (*)(const char *, void *, size_t *, void *, size_t))DSPResolveOriginalSymbol("sysctlbyname");
-    orig_sysctl = (int (*)(int *, unsigned int, void *, size_t *, void *, size_t))DSPResolveOriginalSymbol("sysctl");
-    orig_uname = (int (*)(struct utsname *))DSPResolveOriginalSymbol("uname");
-    orig_dlsym = (void *(*)(void *, const char *))dlsym(RTLD_DEFAULT, "dlsym");
-    orig_SecItemCopyMatching = (OSStatus (*)(CFDictionaryRef, CFTypeRef *))DSPResolveOriginalSymbol("SecItemCopyMatching");
+
+    DSPHookLinked(gDSPTargetSysctlbyname, (void *)DSP_sysctlbyname, (void **)&orig_sysctlbyname);
+    DSPHookLinked(gDSPTargetSysctl, (void *)DSP_sysctl, (void **)&orig_sysctl);
+    DSPHookLinked(gDSPTargetUname, (void *)DSP_uname, (void **)&orig_uname);
+    DSPHookLinked(gDSPTargetSecItem, (void *)DSP_SecItemCopyMatching, (void **)&orig_SecItemCopyMatching);
+    DSPHookLinked(gDSPTargetMGCopyAnswer, (void *)DSP_MGCopyAnswer, (void **)&orig_MGCopyAnswer);
 }
 
 %ctor {
@@ -587,9 +633,9 @@ static void DSPResolveOriginals(void) {
     [DSPProfile reloadPreferences];
     DSPEnsureReady();
     if ([DSPProfile isSpoofEnabled]) {
+        DSPInstallInlineHooks();
         DSPRebindLoadedImages();
         _dyld_register_func_for_add_image(DSPDyldImageAdded);
-        DSPInstallInlineHooks();
     }
     DSPWriteLoadMarker();
     installed = YES;
