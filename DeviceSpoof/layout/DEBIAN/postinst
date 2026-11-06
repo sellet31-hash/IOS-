@@ -1,24 +1,39 @@
 #!/bin/sh
-inject="/var/jb/usr/lib/TweakInject"
-libs="/var/jb/Library/MobileSubstrate/DynamicLibraries"
+log=/var/jb/tmp/devicespoof-postinst.log
+libs=/var/jb/Library/MobileSubstrate/DynamicLibraries
+inject=/var/jb/usr/lib/TweakInject
 
-mkdir -p /var/jb/tmp
+mkdir -p /var/jb/tmp /var/jb/usr/lib "$libs"
+{
+	echo "postinst start"
+	find /var/jb -name 'DeviceSpoof.dylib' 2>/dev/null
+} > "$log"
 
-if [ ! -f "$inject/DeviceSpoof.dylib" ] && [ -f "$libs/DeviceSpoof.dylib" ]; then
-	if [ -L "$inject" ] && [ ! -d "$inject" ]; then
-		rm -f "$inject"
+src=""
+for candidate in \
+	"$libs/DeviceSpoof.dylib" \
+	/var/jb/var/jb/Library/MobileSubstrate/DynamicLibraries/DeviceSpoof.dylib \
+	/var/jb/var/jb/usr/lib/TweakInject/DeviceSpoof.dylib \
+	"$inject/DeviceSpoof.dylib"
+do
+	if [ -f "$candidate" ]; then
+		src=$candidate
+		break
 	fi
-	if [ ! -e "$inject" ]; then
-		ln -s "$libs" "$inject"
-	fi
-	if [ -d "$inject" ] && [ ! -L "$inject" ]; then
-		cp -f "$libs/DeviceSpoof.dylib" "$libs/DeviceSpoof.plist" "$inject/"
-	fi
+done
+
+if [ -z "$src" ]; then
+	echo "dylib missing after unpack" >> "$log"
+	exit 0
 fi
 
-if [ -f "$inject/DeviceSpoof.dylib" ] && [ ! -L "$inject" ]; then
-	mkdir -p "$libs"
-	cp -f "$inject/DeviceSpoof.dylib" "$inject/DeviceSpoof.plist" "$libs/"
-fi
+dir=$(dirname "$src")
+cp -f "$dir/DeviceSpoof.dylib" "$dir/DeviceSpoof.plist" "$libs/"
 
+if [ -L "$inject" ]; then
+	rm -f "$inject"
+fi
+mkdir -p "$inject"
+cp -f "$libs/DeviceSpoof.dylib" "$libs/DeviceSpoof.plist" "$inject/"
+ls -ld "$inject" "$inject/DeviceSpoof.dylib" >> "$log"
 exit 0

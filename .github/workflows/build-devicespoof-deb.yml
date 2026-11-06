@@ -58,6 +58,20 @@ jobs:
             done
             exit "$code"
           fi
+          deb=$(echo packages/*.deb)
+          echo "==== $deb ===="
+          dpkg-deb -c "$deb"
+          if ! dpkg-deb -c "$deb" | grep -q 'var/jb/Library/MobileSubstrate/DynamicLibraries/DeviceSpoof\.dylib'; then
+            echo "::error::DeviceSpoof.dylib is not under var/jb/Library/MobileSubstrate/DynamicLibraries"
+            dpkg-deb -c "$deb" | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            exit 1
+          fi
+          if dpkg-deb -c "$deb" | grep -q 'var/jb/var/jb/'; then
+            echo "::error::deb contains a doubled /var/jb prefix"
+            exit 1
+          fi
 
       - name: Upload deb
         uses: actions/upload-artifact@v4

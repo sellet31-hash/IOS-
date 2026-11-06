@@ -2,6 +2,12 @@
 
 仅在 **台湾虾皮** 进程内生效。目标：在不重刷 iOS 的前提下，尽量模拟 **「刷机后首次安装虾皮」** 时客户端会上报的安装实例 ID，而不是只改序列号。
 
+## 1.2.16
+
+1.2.15 直接往 `TweakInject` 解包。这台手机上 dpkg 写不进那个路径，升级时还把原来的 dylib 删了，所以两个路径都变成空的。
+
+1.2.16 先装进已经存在的 `DynamicLibraries`，装完再复制到 `/var/jb/usr/lib/TweakInject`。另外写入 `/var/jb/tmp/devicespoof-installed.txt`，用来确认包确实装上了。
+
 ## 1.2.15
 
 ElleKit 只读取 `/var/jb/usr/lib/TweakInject`。1.2.11 之后文件被放进 `DynamicLibraries`，这个目录在这台手机上又没有链过去，所以虾皮进程里没有插件，Filza 也搜不到 `lastload.plist`。
